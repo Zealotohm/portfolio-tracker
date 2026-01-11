@@ -1,0 +1,10 @@
+```toml
+name = "portfolio-tracker-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "portfolio-db"
+database_id = "<PUT_YOUR_DB_ID_HERE>"
+```

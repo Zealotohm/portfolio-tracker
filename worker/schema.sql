@@ -1,0 +1,16 @@
+```sql
+CREATE TABLE IF NOT EXISTS assets (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+symbol TEXT NOT NULL,
+name TEXT,
+type TEXT CHECK(type IN ('CRYPTO','TH_STOCK','TH_FUND'))
+);
+
+CREATE TABLE IF NOT EXISTS holdings (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+asset_id INTEGER,
+units REAL,
+avg_cost REAL,
+FOREIGN KEY(asset_id) REFERENCES assets(id)
+);
+```
