@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Ledger — Portfolio Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<!-- Login gate -->
+<div id="login-screen" class="login-screen">
+  <div class="login-card">
+    <div class="brand">
+      <span class="brand-mark">◆</span>
+      <span class="brand-name">LEDGER</span>
+    </div>
+    <p class="login-sub">Portfolio Tracker ส่วนตัวของคุณ</p>
+    <form id="login-form">
+      <input type="password" id="login-password" placeholder="รหัสผ่าน" autocomplete="current-password" />
+      <button type="submit">เข้าสู่ระบบ</button>
+    </form>
+    <p id="login-error" class="login-error"></p>
+  </div>
+</div>
+
+<!-- App shell -->
+<div id="app" class="app hidden">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">◆</span>
+      <span class="brand-name">LEDGER</span>
+    </div>
+
+    <nav class="portfolio-tree" id="portfolio-tree">
+      <!-- injected -->
+    </nav>
+
+    <button class="btn-ghost btn-block" id="btn-new-portfolio">+ Portfolio ใหม่</button>
+
+    <div class="sidebar-footer">
+      <span id="last-updated" class="muted small"></span>
+      <button class="btn-secondary btn-block" id="btn-refresh">↻ อัปเดตราคา</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <!-- Ticker tape -->
+    <div class="ticker-wrap">
+      <div class="ticker-track" id="ticker-track"></div>
+    </div>
+
+    <header class="topbar">
+      <div>
+        <h1 id="current-portfolio-name">All Portfolios</h1>
+        <p class="muted" id="current-portfolio-sub">ภาพรวมทุกพอร์ตรวมกัน</p>
+      </div>
+      <label class="include-sub-toggle">
+        <input type="checkbox" id="include-sub" checked />
+        รวม sub-portfolio
+      </label>
+    </header>
+
+    <section class="summary-cards">
+      <div class="card">
+        <span class="card-label">มูลค่าปัจจุบัน</span>
+        <span class="card-value mono" id="stat-value">–</span>
+      </div>
+      <div class="card">
+        <span class="card-label">ต้นทุนรวม</span>
+        <span class="card-value mono" id="stat-cost">–</span>
+      </div>
+      <div class="card" id="card-pnl">
+        <span class="card-label">กำไร/ขาดทุน (ยังไม่ขาย)</span>
+        <span class="card-value mono" id="stat-pnl">–</span>
+        <span class="card-sub mono" id="stat-pnl-pct">–</span>
+      </div>
+      <div class="card">
+        <span class="card-label">กำไรที่รับรู้แล้ว + ปันผล</span>
+        <span class="card-value mono" id="stat-realized">–</span>
+      </div>
+    </section>
+
+    <section class="charts-row">
+      <div class="panel">
+        <h2>สัดส่วนการถือครอง</h2>
+        <div class="chart-box"><canvas id="chart-allocation"></canvas></div>
+      </div>
+      <div class="panel">
+        <h2>แยกตามประเภทสินทรัพย์</h2>
+        <div class="chart-box"><canvas id="chart-type"></canvas></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Positions</h2>
+      <div class="table-wrap">
+        <table id="positions-table">
+          <thead>
+            <tr>
+              <th>สินทรัพย์</th><th>จำนวน</th><th>ต้นทุนเฉลี่ย</th><th>ราคาปัจจุบัน</th>
+              <th>มูลค่า</th><th>กำไร/ขาดทุน</th><th>%</th>
+            </tr>
+          </thead>
+          <tbody id="positions-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header-row">
+        <h2>Transactions</h2>
+        <button class="btn-primary" id="btn-add-tx">+ เพิ่มรายการ</button>
+      </div>
+      <div class="table-wrap">
+        <table id="tx-table">
+          <thead>
+            <tr>
+              <th>วันที่</th><th>ประเภท</th><th>สินทรัพย์</th><th>จำนวน</th>
+              <th>ราคา</th><th>ค่าธรรมเนียม</th><th>สกุลเงิน</th><th>โน้ต</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="tx-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Add/Edit Transaction Modal -->
+<div class="modal-backdrop hidden" id="tx-modal">
+  <div class="modal">
+    <h2 id="tx-modal-title">เพิ่มรายการ</h2>
+    <form id="tx-form">
+      <div class="form-row">
+        <label>วันที่<input type="date" id="f-date" required /></label>
+        <label>ประเภท
+          <select id="f-type">
+            <option value="buy">ซื้อ (Buy)</option>
+            <option value="sell">ขาย (Sell)</option>
+            <option value="dividend">ปันผล (Dividend)</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-row">
+        <label id="f-symbol-label">สัญลักษณ์ (เช่น AAPL, PTT.BK, bitcoin)<input type="text" id="f-symbol" required /></label>
+        <label>ประเภทสินทรัพย์
+          <select id="f-assetType">
+            <option value="stock">หุ้น</option>
+            <option value="etf">ETF</option>
+            <option value="fund">กองทุน (ต่างประเทศ - Yahoo)</option>
+            <option value="thai_fund">กองทุนไทย (SEC - ใช้ proj_id)</option>
+            <option value="crypto">Crypto</option>
+          </select>
+        </label>
+      </div>
+      <div class="form-row">
+        <label>จำนวนหน่วย<input type="number" step="any" id="f-quantity" required /></label>
+        <label>ราคาต่อหน่วย<input type="number" step="any" id="f-price" required /></label>
+      </div>
+      <div class="form-row">
+        <label>สกุลเงิน<input type="text" id="f-currency" value="USD" required /></label>
+        <label>ค่าธรรมเนียม<input type="number" step="any" id="f-fees" value="0" /></label>
+      </div>
+      <label class="full">โน้ต<input type="text" id="f-note" /></label>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="btn-cancel-tx">ยกเลิก</button>
+        <button type="submit" class="btn-primary">บันทึก</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- New Portfolio Modal -->
+<div class="modal-backdrop hidden" id="portfolio-modal">
+  <div class="modal modal-sm">
+    <h2>Portfolio ใหม่</h2>
+    <form id="portfolio-form">
+      <label class="full">ชื่อ<input type="text" id="p-name" required /></label>
+      <label class="full">อยู่ภายใต้ (sub-portfolio ของ)
+        <select id="p-parent"><option value="">— ไม่มี (พอร์ตหลัก) —</option></select>
+      </label>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="btn-cancel-portfolio">ยกเลิก</button>
+        <button type="submit" class="btn-primary">สร้าง</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
