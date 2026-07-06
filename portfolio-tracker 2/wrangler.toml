@@ -1,0 +1,24 @@
+name = "portfolio-tracker"
+main = "src/index.js"
+compatibility_date = "2024-11-01"
+
+# ---- Static frontend (served by the same Worker) ----
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+# ---- R2 bucket: stores ALL data (portfolios, transactions, price cache) ----
+[[r2_buckets]]
+binding = "DATA_BUCKET"
+bucket_name = "portfolio-tracker-data"
+
+# ---- Daily price refresh (runs at 22:30 UTC ~ 05:30 Bangkok time, before markets reopen) ----
+[triggers]
+crons = ["30 22 * * *"]
+
+# ---- Secrets (set with `wrangler secret put <NAME>`) ----
+# APP_PASSWORD -> single shared password protecting the app
+# SEC_API_KEY  -> optional, only needed if you track Thai mutual funds (SEC Open Data API subscription key)
+
+[vars]
+BASE_CURRENCY = "THB"
