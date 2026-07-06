@@ -5,6 +5,8 @@ const state = {
   summary: null,
   transactions: [],
   charts: {},
+  editingTxId: null,
+  editingPortfolioId: null,
 };
 
 const BASE_CCY_FALLBACK = "THB";
@@ -92,8 +94,9 @@ function renderPortfolioTree() {
   const renderNode = (p, depth) => {
     const item = document.createElement("div");
     item.className = "portfolio-item" + (depth > 0 ? " child" : "") + (state.currentId === p.id ? " active" : "");
-    item.innerHTML = `<span>${escapeHtml(p.name)}</span><span class="del" data-id="${p.id}">✕</span>`;
+    item.innerHTML = `<span>${escapeHtml(p.name)}</span><span class="item-actions"><span class="edit" data-id="${p.id}">✎</span><span class="del" data-id="${p.id}">✕</span></span>`;
     item.querySelector("span").onclick = () => selectPortfolio(p.id);
+    item.querySelector(".edit").onclick = (e) => { e.stopPropagation(); openEditPortfolio(p); };
     item.querySelector(".del").onclick = (e) => { e.stopPropagation(); deletePortfolio(p.id); };
     el.appendChild(item);
     const children = state.portfolios.filter((c) => c.parentId === p.id);
@@ -102,15 +105,31 @@ function renderPortfolioTree() {
   roots.forEach((r) => renderNode(r, 0));
 }
 
-function renderParentSelect() {
+function renderParentSelect(excludeId) {
   const sel = document.getElementById("p-parent");
   sel.innerHTML = '<option value="">— ไม่มี (พอร์ตหลัก) —</option>';
-  state.portfolios.forEach((p) => {
-    const opt = document.createElement("option");
-    opt.value = p.id;
-    opt.textContent = p.name;
-    sel.appendChild(opt);
-  });
+  const excluded = new Set();
+  if (excludeId) {
+    excluded.add(excludeId);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const p of state.portfolios) {
+        if (p.parentId && excluded.has(p.parentId) && !excluded.has(p.id)) {
+          excluded.add(p.id);
+          changed = true;
+        }
+      }
+    }
+  }
+  state.portfolios
+    .filter((p) => !excluded.has(p.id))
+    .forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.name;
+      sel.appendChild(opt);
+    });
 }
 
 function selectPortfolio(id) {
@@ -286,9 +305,13 @@ function renderTransactions() {
         <td>${fmt(t.fees || 0)}</td>
         <td class="label-cell">${t.currency}</td>
         <td class="label-cell muted small">${escapeHtml(t.note || "")}</td>
-        <td><button class="icon-btn" data-id="${t.id}">✕</button></td>
+        <td class="row-actions">
+          <button class="icon-btn" data-action="edit" data-id="${t.id}">✎</button>
+          <button class="icon-btn" data-action="delete" data-id="${t.id}">✕</button>
+        </td>
       `;
-      tr.querySelector(".icon-btn").onclick = () => deleteTx(t.id);
+      tr.querySelector('[data-action="edit"]').onclick = () => openEditTx(t);
+      tr.querySelector('[data-action="delete"]').onclick = () => deleteTx(t.id);
       body.appendChild(tr);
     });
 }
@@ -321,11 +344,29 @@ async function refreshPrices() {
 // ---------- Modals ----------
 const txModal = document.getElementById("tx-modal");
 document.getElementById("btn-add-tx").addEventListener("click", () => {
+  state.editingTxId = null;
+  document.getElementById("tx-modal-title").textContent = "เพิ่มรายการ";
   document.getElementById("tx-form").reset();
   document.getElementById("f-date").value = new Date().toISOString().slice(0, 10);
   updateSymbolHint();
   txModal.classList.remove("hidden");
 });
+
+function openEditTx(t) {
+  state.editingTxId = t.id;
+  document.getElementById("tx-modal-title").textContent = "แก้ไขรายการ";
+  document.getElementById("f-date").value = t.date;
+  document.getElementById("f-type").value = t.type;
+  document.getElementById("f-symbol").value = t.symbol;
+  document.getElementById("f-assetType").value = t.assetType;
+  document.getElementById("f-quantity").value = t.quantity;
+  document.getElementById("f-price").value = t.price;
+  document.getElementById("f-currency").value = t.currency;
+  document.getElementById("f-fees").value = t.fees || 0;
+  document.getElementById("f-note").value = t.note || "";
+  updateSymbolHint();
+  txModal.classList.remove("hidden");
+}
 
 function updateSymbolHint() {
   const type = document.getElementById("f-assetType").value;
@@ -342,7 +383,10 @@ function updateSymbolHint() {
   if (type === "thai_fund") currencyField.value = "THB";
 }
 document.getElementById("f-assetType").addEventListener("change", updateSymbolHint);
-document.getElementById("btn-cancel-tx").addEventListener("click", () => txModal.classList.add("hidden"));
+document.getElementById("btn-cancel-tx").addEventListener("click", () => {
+  state.editingTxId = null;
+  txModal.classList.add("hidden");
+});
 
 document.getElementById("tx-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -358,8 +402,13 @@ document.getElementById("tx-form").addEventListener("submit", async (e) => {
     note: document.getElementById("f-note").value,
   };
   try {
-    await api(`/api/transactions/${state.currentId}`, { method: "POST", body: JSON.stringify(body) });
+    if (state.editingTxId) {
+      await api(`/api/transactions/${state.currentId}/${state.editingTxId}`, { method: "PUT", body: JSON.stringify(body) });
+    } else {
+      await api(`/api/transactions/${state.currentId}`, { method: "POST", body: JSON.stringify(body) });
+    }
     txModal.classList.add("hidden");
+    state.editingTxId = null;
     await loadSummaryAndTx();
   } catch (err) {
     alert("บันทึกไม่สำเร็จ: " + err.message);
@@ -368,10 +417,29 @@ document.getElementById("tx-form").addEventListener("submit", async (e) => {
 
 const portfolioModal = document.getElementById("portfolio-modal");
 document.getElementById("btn-new-portfolio").addEventListener("click", () => {
+  state.editingPortfolioId = null;
+  document.getElementById("portfolio-modal-title").textContent = "Portfolio ใหม่";
+  document.getElementById("btn-submit-portfolio").textContent = "สร้าง";
   document.getElementById("portfolio-form").reset();
+  renderParentSelect();
   portfolioModal.classList.remove("hidden");
 });
-document.getElementById("btn-cancel-portfolio").addEventListener("click", () => portfolioModal.classList.add("hidden"));
+
+function openEditPortfolio(p) {
+  state.editingPortfolioId = p.id;
+  document.getElementById("portfolio-modal-title").textContent = "แก้ไข Portfolio";
+  document.getElementById("btn-submit-portfolio").textContent = "บันทึก";
+  document.getElementById("p-name").value = p.name;
+  // Rebuild the parent dropdown excluding this portfolio itself (can't be its own parent)
+  renderParentSelect(p.id);
+  document.getElementById("p-parent").value = p.parentId || "";
+  portfolioModal.classList.remove("hidden");
+}
+
+document.getElementById("btn-cancel-portfolio").addEventListener("click", () => {
+  state.editingPortfolioId = null;
+  portfolioModal.classList.add("hidden");
+});
 
 document.getElementById("portfolio-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -380,12 +448,20 @@ document.getElementById("portfolio-form").addEventListener("submit", async (e) =
     parentId: document.getElementById("p-parent").value || null,
   };
   try {
-    const created = await api("/api/portfolios", { method: "POST", body: JSON.stringify(body) });
-    portfolioModal.classList.add("hidden");
-    await loadPortfolios();
-    selectPortfolio(created.id);
+    if (state.editingPortfolioId) {
+      await api(`/api/portfolios/${state.editingPortfolioId}`, { method: "PUT", body: JSON.stringify(body) });
+      portfolioModal.classList.add("hidden");
+      state.editingPortfolioId = null;
+      await loadPortfolios();
+      selectPortfolio(state.currentId); // refresh name shown in topbar if it was the active one
+    } else {
+      const created = await api("/api/portfolios", { method: "POST", body: JSON.stringify(body) });
+      portfolioModal.classList.add("hidden");
+      await loadPortfolios();
+      selectPortfolio(created.id);
+    }
   } catch (err) {
-    alert("สร้างไม่สำเร็จ: " + err.message);
+    alert("บันทึกไม่สำเร็จ: " + err.message);
   }
 });
 

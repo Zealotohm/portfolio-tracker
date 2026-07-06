@@ -122,6 +122,34 @@ const routes = [
     },
   },
   {
+    method: "PUT",
+    pattern: /^\/api\/portfolios\/([^/]+)$/,
+    handler: async (req, env, [id]) => {
+      const body = await req.json();
+      const list = await getPortfolios(env.DATA_BUCKET);
+      const idx = list.findIndex((p) => p.id === id);
+      if (idx === -1) return json({ error: "not found" }, { status: 404 });
+
+      const newParentId = body.parentId !== undefined ? body.parentId || null : list[idx].parentId;
+      if (newParentId === id) return json({ error: "portfolio ไม่สามารถเป็น parent ของตัวเองได้" }, { status: 400 });
+      // prevent creating a cycle (setting parent to one of its own descendants)
+      let cursor = newParentId;
+      while (cursor) {
+        if (cursor === id) return json({ error: "ไม่สามารถย้ายไปอยู่ใต้ sub-portfolio ของตัวเองได้" }, { status: 400 });
+        const parent = list.find((p) => p.id === cursor);
+        cursor = parent ? parent.parentId : null;
+      }
+
+      list[idx] = {
+        ...list[idx],
+        name: body.name !== undefined ? body.name : list[idx].name,
+        parentId: newParentId,
+      };
+      await savePortfolios(env.DATA_BUCKET, list);
+      return json(list[idx]);
+    },
+  },
+  {
     method: "DELETE",
     pattern: /^\/api\/portfolios\/([^/]+)$/,
     handler: async (req, env, [id]) => {

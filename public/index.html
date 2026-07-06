@@ -178,7 +178,7 @@
 <!-- New Portfolio Modal -->
 <div class="modal-backdrop hidden" id="portfolio-modal">
   <div class="modal modal-sm">
-    <h2>Portfolio ใหม่</h2>
+    <h2 id="portfolio-modal-title">Portfolio ใหม่</h2>
     <form id="portfolio-form">
       <label class="full">ชื่อ<input type="text" id="p-name" required /></label>
       <label class="full">อยู่ภายใต้ (sub-portfolio ของ)
@@ -186,7 +186,7 @@
       </label>
       <div class="modal-actions">
         <button type="button" class="btn-ghost" id="btn-cancel-portfolio">ยกเลิก</button>
-        <button type="submit" class="btn-primary">สร้าง</button>
+        <button type="submit" class="btn-primary" id="btn-submit-portfolio">สร้าง</button>
       </div>
     </form>
   </div>

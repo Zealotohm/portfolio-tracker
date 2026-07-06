@@ -128,8 +128,11 @@ button { font-family: var(--font-body); cursor: pointer; border: none; }
 .portfolio-item:hover { background: var(--surface-alt); color: var(--text); }
 .portfolio-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
 .portfolio-item.child { padding-left: 22px; }
-.portfolio-item .del { opacity: 0; font-size: 0.8rem; }
-.portfolio-item:hover .del { opacity: 1; }
+.portfolio-item .item-actions { display: flex; gap: 8px; }
+.portfolio-item .item-actions span { font-size: 0.8rem; opacity: 0.55; }
+.portfolio-item .item-actions span:hover { opacity: 1; }
+.portfolio-item .item-actions .edit:hover { color: var(--accent); }
+.portfolio-item .item-actions .del:hover { color: var(--loss); }
 
 .sidebar-footer { display: flex; flex-direction: column; gap: 8px; }
 
@@ -216,6 +219,8 @@ tr:last-child td { border-bottom: none; }
 .loss { color: var(--loss); }
 .icon-btn { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.9rem; }
 .icon-btn:hover { color: var(--loss); }
+.icon-btn[data-action="edit"]:hover { color: var(--accent); }
+.icon-btn + .icon-btn { margin-left: 10px; }
 
 /* ---------- Modal ---------- */
 .modal-backdrop {
