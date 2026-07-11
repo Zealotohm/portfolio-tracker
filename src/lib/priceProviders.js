@@ -66,107 +66,84 @@ export async function fetchFxRate(from, to) {
 }
 
 // ---- SEC Thailand Open Data API (fund NAV) ----
-// Docs: https://api-portal.sec.or.th (products: "Fund Factsheet API", "Fund Daily Info API")
+// Docs: https://secopendata.sec.or.th (product group "Fund", base host api.sec.or.th)
 // Auth: header "Ocp-Apim-Subscription-Key: <key>" on every request.
-//
-// Two things investors don't know up front but the API requires:
-// 1. NAV lookups are indexed by proj_id (e.g. "M0076_2561"), not the fund's trading name
-//    (e.g. "KFINDIARMF") that appears everywhere else (Settrade, AMC sites, statements).
-// 2. The NAV endpoint is date-specific (no "give me the latest" shortcut) and returns 204
-//    on non-trading days (weekends/holidays), so the caller must walk backward from today.
-//
-// To keep the UX the same as every other asset type (type the ticker you already know),
-// resolveSecProjId() below builds a name -> proj_id directory once (via the AMC + fund-list
-// endpoints) and caches it, so callers can keep using the trading name.
+// Confirmed against the current published spec (categories/fund.json):
+//   GET /v2/fund/general-info/profiles?project_info=<name-or-proj_id>  -> fund profiles,
+//     `project_info` does an exact match on proj_id and a partial match on proj_abbr_name /
+//     proj_name_th / proj_name_en. This is how we resolve a trading name (e.g. "KFINDIARMF",
+//     what investors actually recognize) to its proj_id (e.g. "M0076_2561", what NAV lookups
+//     require) without needing a separate AMC-crawl product/subscription.
+//   GET /v2/fund/daily-info/nav?proj_id=..&start_nav_date=..&end_nav_date=..  -> NAV history;
+//     there is no "latest" flag, so we request a short trailing window and take the newest
+//     item (skips weekends/holidays automatically since those dates just aren't in the result).
 const SEC_BASE = "https://api.sec.or.th";
 
 function secHeaders(apiKey) {
   return { "Ocp-Apim-Subscription-Key": apiKey };
 }
 
-// Builds a fresh { byAbbr: { "KFINDIARMF": "M0076_2561", ... }, updatedAt } directory by
-// walking every AMC's fund list. Costs ~20-30 subrequests, so callers should cache the result
-// (see storage.js getSecFundDirectory/saveSecFundDirectory) and only rebuild occasionally.
-export async function buildSecFundDirectory(apiKey) {
-  if (!apiKey) throw new Error("SEC_API_KEY ยังไม่ได้ตั้งค่า (wrangler secret put SEC_API_KEY)");
-  const headers = secHeaders(apiKey);
-
-  const amcRes = await fetch(`${SEC_BASE}/FundFactsheet/fund/amc`, { headers });
-  if (!amcRes.ok) throw new Error(`SEC amc list fetch failed: ${amcRes.status}`);
-  const amcList = await amcRes.json();
-
-  const byAbbr = {};
-  const fundLists = await Promise.all(
-    amcList.map((amc) =>
-      fetch(`${SEC_BASE}/FundFactsheet/fund/amc/${amc.unique_id}`, { headers })
-        .then((r) => (r.ok ? r.json() : []))
-        .catch(() => [])
-    )
-  );
-  for (const funds of fundLists) {
-    for (const f of funds || []) {
-      if (f.proj_abbr_name && f.proj_id) byAbbr[f.proj_abbr_name.toUpperCase()] = f.proj_id;
-    }
+async function secGet(path, apiKey) {
+  const res = await fetch(`${SEC_BASE}${path}`, { headers: secHeaders(apiKey) });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`SEC ${path} -> ${res.status} ${body.slice(0, 200)}`);
   }
-  return { byAbbr, updatedAt: new Date().toISOString() };
+  return res.json();
 }
 
 // A proj_id already looks like "M0076_2561" - letter + digits + underscore + year.
-// If the stored symbol already matches that shape, use it directly (skips directory lookup).
+// If the stored symbol already matches that shape, use it directly (skips the name search).
 function looksLikeProjId(symbol) {
   return /^[A-Za-z]?\d{3,6}_\d{4}$/.test(symbol);
 }
 
-export async function resolveSecProjId(symbol, directory) {
+export async function resolveSecProjId(symbol, apiKey) {
   if (looksLikeProjId(symbol)) return symbol;
-  return directory.byAbbr[symbol.toUpperCase()] || null;
+  if (!apiKey) throw new Error("SEC_API_KEY ยังไม่ได้ตั้งค่า (wrangler secret put SEC_API_KEY)");
+  const data = await secGet(`/v2/fund/general-info/profiles?project_info=${encodeURIComponent(symbol)}&page_size=20`, apiKey);
+  const items = data?.items || [];
+  const target = symbol.trim().toUpperCase();
+  const exact = items.find((f) => (f.proj_abbr_name || "").toUpperCase() === target);
+  return (exact || items[0])?.proj_id || null;
 }
 
 export async function fetchSecFundNav(projId, apiKey) {
   if (!apiKey) throw new Error("SEC_API_KEY ยังไม่ได้ตั้งค่า (wrangler secret put SEC_API_KEY)");
-  const headers = secHeaders(apiKey);
-  let lastStatus = null;
-  let lastBody = "";
+  const end = new Date();
+  const start = new Date(end);
+  start.setUTCDate(start.getUTCDate() - 14); // covers long weekends/holiday clusters
+  const startStr = start.toISOString().slice(0, 10);
+  const endStr = end.toISOString().slice(0, 10);
 
-  // NAV is published per trading day only; walk back up to 10 days to skip weekends/holidays.
-  for (let daysBack = 0; daysBack <= 10; daysBack++) {
-    const d = new Date();
-    d.setUTCDate(d.getUTCDate() - daysBack);
-    const dateStr = d.toISOString().slice(0, 10);
-    const res = await fetch(`${SEC_BASE}/FundDailyInfo/${encodeURIComponent(projId)}/dailynav/${dateStr}`, {
-      headers,
-    });
-    if (res.status === 204) continue; // no NAV published for this date, try an earlier day
-    if (!res.ok) {
-      lastStatus = res.status;
-      lastBody = await res.text().catch(() => "");
-      continue;
-    }
-    const data = await res.json();
-    const record = Array.isArray(data) ? data[0] : data;
-    const nav = record?.last_val ?? record?.sell_price ?? record?.nav ?? record?.value;
-    if (nav == null) continue;
-    return {
-      symbol: projId,
-      price: Number(nav),
-      currency: "THB",
-      name: record?.proj_name_th || record?.proj_name_en || projId,
-      updatedAt: new Date().toISOString(),
-      source: "sec",
-    };
-  }
-  throw new Error(
-    lastStatus != null
-      ? `SEC dailynav fetch failed for ${projId}: ${lastStatus} ${lastBody.slice(0, 200)}`
-      : `SEC ไม่มี NAV ของ ${projId} ในช่วง 10 วันล่าสุด`
+  const data = await secGet(
+    `/v2/fund/daily-info/nav?proj_id=${encodeURIComponent(projId)}&start_nav_date=${startStr}&end_nav_date=${endStr}&page_size=100`,
+    apiKey
   );
+  const items = data?.items || [];
+  if (items.length === 0) throw new Error(`SEC ไม่มี NAV ของ ${projId} ในช่วง 14 วันล่าสุด`);
+
+  // Prefer the plain/"main" share class when a fund has multiple classes, then take the newest date.
+  const preferred = items.filter((i) => !i.fund_class_name || ["main", "-"].includes(i.fund_class_name));
+  const pool = preferred.length > 0 ? preferred : items;
+  const latest = pool.reduce((a, b) => (a.nav_date > b.nav_date ? a : b));
+
+  return {
+    symbol: projId,
+    price: Number(latest.last_val),
+    currency: "THB",
+    name: projId,
+    updatedAt: new Date().toISOString(),
+    source: "sec",
+  };
 }
 
 // Refresh every tracked symbol and return the updated cache plus any symbols that failed
 // to fetch (so the caller/UI can flag stale prices instead of silently keeping old data).
-// `secDirectory` is the cached name->proj_id map from storage.js; `onDirectoryStale` is called
-// (at most once) if a Thai fund symbol can't be resolved, so the caller can rebuild and retry.
-export async function refreshAllPrices(holdings, existingCache, secApiKey, secDirectory, onDirectoryStale) {
+// `secDirectory` is the cached { byAbbr: { SYMBOL: proj_id } } map from storage.js;
+// `onDirectoryUpdate` persists it whenever a new symbol gets resolved, so future refreshes
+// skip the name-search call for symbols we've already looked up.
+export async function refreshAllPrices(holdings, existingCache, secApiKey, secDirectory, onDirectoryUpdate) {
   const cache = { ...existingCache };
   const failures = [];
   const cryptoIds = holdings.filter((h) => h.assetType === "crypto").map((h) => h.symbol);
@@ -183,27 +160,32 @@ export async function refreshAllPrices(holdings, existingCache, secApiKey, secDi
     failures.push(...cryptoIds);
   }
 
-  // Thai mutual funds via SEC Open API: resolve each trading name to its proj_id first
-  // (rebuilding the directory once if a symbol isn't found in the cached one), then fetch NAV.
-  let directory = secDirectory;
-  let rebuiltDirectory = false;
+  // Thai mutual funds via SEC Open API: resolve each trading name to its proj_id (cached after
+  // the first lookup), then fetch NAV.
+  const directory = { byAbbr: { ...(secDirectory?.byAbbr || {}) } };
+  let directoryChanged = false;
   for (const h of thaiFunds) {
     try {
-      let projId = await resolveSecProjId(h.symbol, directory);
-      if (!projId && !rebuiltDirectory) {
-        rebuiltDirectory = true;
-        directory = await buildSecFundDirectory(secApiKey);
-        if (onDirectoryStale) await onDirectoryStale(directory);
-        projId = await resolveSecProjId(h.symbol, directory);
+      const key = h.symbol.trim().toUpperCase();
+      let projId = looksLikeProjId(h.symbol) ? h.symbol : directory.byAbbr[key];
+      if (!projId) {
+        projId = await resolveSecProjId(h.symbol, secApiKey);
+        if (projId) {
+          directory.byAbbr[key] = projId;
+          directoryChanged = true;
+        }
       }
       if (!projId) {
-        throw new Error(`ไม่พบกองทุน "${h.symbol}" ใน SEC fund directory - ตรวจสอบชื่อย่อกองทุนอีกครั้ง`);
+        throw new Error(`ไม่พบกองทุน "${h.symbol}" ใน SEC (ลองค้นด้วยชื่อย่อกองทุน หรือใส่ proj_id โดยตรง)`);
       }
       cache[h.symbol] = await fetchSecFundNav(projId, secApiKey);
     } catch (e) {
       console.error("SEC NAV refresh failed for", h.symbol, e);
       failures.push(h.symbol);
     }
+  }
+  if (directoryChanged && onDirectoryUpdate) {
+    await onDirectoryUpdate({ byAbbr: directory.byAbbr, updatedAt: new Date().toISOString() });
   }
 
   // Stocks/ETF/global funds one call each (Yahoo has no clean batch endpoint on the public chart API)
