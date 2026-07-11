@@ -105,15 +105,20 @@ export async function resolveSecProjId(symbol, apiKey) {
   const data = await secGet(`/v2/fund/general-info/profiles?project_info=${encodeURIComponent(symbol)}&page_size=20`, apiKey);
   const items = data?.items || [];
   const target = symbol.trim().toUpperCase();
-  const exact = items.find((f) => (f.proj_abbr_name || "").toUpperCase() === target);
-  return (exact || items[0])?.proj_id || null;
+  const exactMatches = items.filter((f) => (f.proj_abbr_name || "").toUpperCase() === target);
+  // A trading name can be reused after a fund is reorganized/renamed, leaving old Canceled/
+  // Liquidated registrations in the search results alongside the current one - prefer the
+  // still-Registered project so we don't pick a defunct proj_id.
+  const best =
+    exactMatches.find((f) => f.fund_status === "Registered") || exactMatches[0] || items[0];
+  return best?.proj_id || null;
 }
 
 export async function fetchSecFundNav(projId, apiKey) {
   if (!apiKey) throw new Error("SEC_API_KEY ยังไม่ได้ตั้งค่า (wrangler secret put SEC_API_KEY)");
   const end = new Date();
   const start = new Date(end);
-  start.setUTCDate(start.getUTCDate() - 14); // covers long weekends/holiday clusters
+  start.setUTCDate(start.getUTCDate() - 45); // some AMCs report to this dataset less frequently
   const startStr = start.toISOString().slice(0, 10);
   const endStr = end.toISOString().slice(0, 10);
 
@@ -122,7 +127,9 @@ export async function fetchSecFundNav(projId, apiKey) {
     apiKey
   );
   const items = data?.items || [];
-  if (items.length === 0) throw new Error(`SEC ไม่มี NAV ของ ${projId} ในช่วง 14 วันล่าสุด`);
+  if (items.length === 0) {
+    throw new Error(`SEC ไม่มี NAV ของ ${projId} ในช่วง ${startStr}..${endStr}`);
+  }
 
   // Prefer the plain/"main" share class when a fund has multiple classes, then take the newest date.
   const preferred = items.filter((i) => !i.fund_class_name || ["main", "-"].includes(i.fund_class_name));
