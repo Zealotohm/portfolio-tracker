@@ -42,7 +42,7 @@ async function refreshPricesAndFx(env) {
   const { holdings, currencies } = collectHoldings(allTx);
 
   const priceCache = await getPriceCache(bucket);
-  const updatedPriceCache = await refreshAllPrices(holdings, priceCache, env.SEC_API_KEY);
+  const { cache: updatedPriceCache, failures } = await refreshAllPrices(holdings, priceCache, env.SEC_API_KEY);
   await savePriceCache(bucket, updatedPriceCache);
 
   // Build fx rates needed: every holding currency -> base, and every quote currency -> base
@@ -52,18 +52,26 @@ async function refreshPricesAndFx(env) {
 
   const fxCache = await getFxCache(bucket);
   const rates = { ...(fxCache.rates || {}) };
+  const fxFailures = [];
   for (const ccy of quoteCurrencies) {
     if (ccy === base) continue;
     try {
       const rate = await fetchFxRate(ccy, base);
       if (rate != null) rates[`${ccy}${base}`] = rate;
+      else fxFailures.push(ccy);
     } catch (e) {
       console.error("fx fetch failed", ccy, base, e);
+      fxFailures.push(ccy);
     }
   }
   await saveFxCache(bucket, { rates, updatedAt: new Date().toISOString() });
 
-  return { priceCache: updatedPriceCache, fx: { rates, updatedAt: new Date().toISOString() } };
+  return {
+    priceCache: updatedPriceCache,
+    fx: { rates, updatedAt: new Date().toISOString() },
+    failedSymbols: failures,
+    failedCurrencies: fxFailures,
+  };
 }
 
 // Gather a portfolio + all its descendant sub-portfolios' transactions into one flat list.

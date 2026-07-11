@@ -142,7 +142,17 @@ function selectPortfolio(id) {
 }
 
 async function deletePortfolio(id) {
-  if (!confirm("ลบ portfolio นี้? (ต้องไม่มี sub-portfolio อยู่ข้างใน)")) return;
+  const p = state.portfolios.find((x) => x.id === id);
+  let txCount = 0;
+  try {
+    txCount = (await api(`/api/transactions/${id}`)).length;
+  } catch (e) {
+    // if this fails we still let the user decide below, just without the exact count
+  }
+  const warning = txCount > 0
+    ? `ลบ portfolio "${p ? p.name : id}"? การลบนี้จะลบ transaction ทั้งหมด ${txCount} รายการข้างในไปด้วย และไม่สามารถกู้คืนได้`
+    : `ลบ portfolio "${p ? p.name : id}"? (ต้องไม่มี sub-portfolio อยู่ข้างใน)`;
+  if (!confirm(warning)) return;
   try {
     await api(`/api/portfolios/${id}`, { method: "DELETE" });
     if (state.currentId === id) state.currentId = null;
@@ -191,6 +201,14 @@ function renderSummary() {
   document.getElementById("last-updated").textContent = s.priceUpdatedAt
     ? "ราคาอัปเดต: " + new Date(s.priceUpdatedAt).toLocaleString("th-TH")
     : "ยังไม่เคยอัปเดตราคา";
+
+  const fxBanner = document.getElementById("fx-warning-banner");
+  if (s.fxWarnings && s.fxWarnings.length > 0) {
+    fxBanner.textContent = `⚠ ไม่มีอัตราแลกเปลี่ยนสำหรับ: ${s.fxWarnings.join(", ")} — ตัวเลขบางส่วนด้านล่างอาจไม่ถูกต้องหรือไม่แสดงมูลค่า`;
+    fxBanner.classList.remove("hidden");
+  } else {
+    fxBanner.classList.add("hidden");
+  }
 }
 
 function renderTicker() {
@@ -272,12 +290,13 @@ function renderPositions() {
     .forEach((p) => {
       const cls = p.unrealizedPnLBase >= 0 ? "gain" : "loss";
       const tr = document.createElement("tr");
+      const staleBadge = p.fxMissing ? ` <span class="badge-warn" title="ไม่มีอัตราแลกเปลี่ยนล่าสุด ตัวเลขนี้อาจไม่ถูกต้อง">⚠ FX</span>` : "";
       tr.innerHTML = `
         <td class="label-cell">${escapeHtml(p.symbol)}<br/><span class="muted small">${assetTypeLabel(p.assetType)}</span></td>
         <td>${fmt(p.quantity, { maximumFractionDigits: 6, minimumFractionDigits: 0 })}</td>
-        <td>${fmt(p.avgCost)} ${p.currency}</td>
-        <td>${p.currentPrice != null ? fmt(p.currentPrice) + " " + p.quoteCurrency : "–"}</td>
-        <td>${p.marketValueBase != null ? fmt(p.marketValueBase) + " " + state.summary.baseCurrency : "–"}</td>
+        <td>${fmt(p.avgCost)} ${escapeHtml(p.currency)}</td>
+        <td>${p.currentPrice != null ? fmt(p.currentPrice) + " " + escapeHtml(p.quoteCurrency) : "–"}</td>
+        <td>${p.marketValueBase != null ? fmt(p.marketValueBase) + " " + escapeHtml(state.summary.baseCurrency) : "–"}${staleBadge}</td>
         <td class="${cls}">${p.unrealizedPnLBase != null ? (p.unrealizedPnLBase >= 0 ? "+" : "") + fmt(p.unrealizedPnLBase) : "–"}</td>
         <td class="${cls}">${p.unrealizedPnLPct != null ? (p.unrealizedPnLPct >= 0 ? "+" : "") + fmt(p.unrealizedPnLPct, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + "%" : "–"}</td>
       `;
@@ -303,7 +322,7 @@ function renderTransactions() {
         <td>${fmt(t.quantity, { maximumFractionDigits: 6, minimumFractionDigits: 0 })}</td>
         <td>${fmt(t.price)}</td>
         <td>${fmt(t.fees || 0)}</td>
-        <td class="label-cell">${t.currency}</td>
+        <td class="label-cell">${escapeHtml(t.currency)}</td>
         <td class="label-cell muted small">${escapeHtml(t.note || "")}</td>
         <td class="row-actions">
           <button class="icon-btn" data-action="edit" data-id="${t.id}">✎</button>
@@ -331,8 +350,16 @@ async function refreshPrices() {
   btn.disabled = true;
   btn.textContent = "กำลังอัปเดต...";
   try {
-    await api("/api/refresh-prices", { method: "POST" });
+    const result = await api("/api/refresh-prices", { method: "POST" });
     await loadSummaryAndTx();
+    const failedSymbols = result.failedSymbols || [];
+    const failedCurrencies = result.failedCurrencies || [];
+    if (failedSymbols.length > 0 || failedCurrencies.length > 0) {
+      const parts = [];
+      if (failedSymbols.length > 0) parts.push(`ราคา: ${failedSymbols.join(", ")}`);
+      if (failedCurrencies.length > 0) parts.push(`อัตราแลกเปลี่ยน: ${failedCurrencies.join(", ")}`);
+      alert(`อัปเดตไม่สำเร็จบางรายการ (ยังใช้ค่าล่าสุดที่เคยดึงได้อยู่):\n${parts.join("\n")}`);
+    }
   } catch (e) {
     alert("อัปเดตราคาไม่สำเร็จ: " + e.message);
   } finally {

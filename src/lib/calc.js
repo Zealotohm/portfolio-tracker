@@ -60,6 +60,7 @@ export function buildSummary(positions, priceCache, fxRates, baseCurrency) {
   let totalCost = 0;
   let totalRealized = 0;
   let totalDividends = 0;
+  const fxWarnings = new Set();
 
   for (const pos of positions) {
     if (pos.quantity <= 0 && pos.realizedPnL === 0 && pos.totalDividends === 0) continue;
@@ -70,16 +71,20 @@ export function buildSummary(positions, priceCache, fxRates, baseCurrency) {
 
     const fxToBase = getRate(fxRates, quoteCurrency, baseCurrency);
     const fxCostToBase = getRate(fxRates, pos.currency, baseCurrency);
+    if (fxToBase == null) fxWarnings.add(quoteCurrency);
+    if (fxCostToBase == null) fxWarnings.add(pos.currency);
 
-    const marketValueBase = currentPrice != null ? pos.quantity * currentPrice * fxToBase : null;
-    const costBasisBase = pos.investedCost * fxCostToBase;
-    const unrealizedPnLBase = marketValueBase != null ? marketValueBase - costBasisBase : null;
+    const marketValueBase = currentPrice != null && fxToBase != null ? pos.quantity * currentPrice * fxToBase : null;
+    const costBasisBase = fxCostToBase != null ? pos.investedCost * fxCostToBase : null;
+    const unrealizedPnLBase = marketValueBase != null && costBasisBase != null ? marketValueBase - costBasisBase : null;
     const unrealizedPnLPct = costBasisBase > 0 && unrealizedPnLBase != null ? (unrealizedPnLBase / costBasisBase) * 100 : null;
 
     if (marketValueBase != null) totalValue += marketValueBase;
-    totalCost += costBasisBase;
-    totalRealized += pos.realizedPnL * fxCostToBase;
-    totalDividends += pos.totalDividends * fxCostToBase;
+    if (costBasisBase != null) totalCost += costBasisBase;
+    if (fxCostToBase != null) {
+      totalRealized += pos.realizedPnL * fxCostToBase;
+      totalDividends += pos.totalDividends * fxCostToBase;
+    }
 
     rows.push({
       symbol: pos.symbol,
@@ -93,10 +98,11 @@ export function buildSummary(positions, priceCache, fxRates, baseCurrency) {
       costBasisBase,
       unrealizedPnLBase,
       unrealizedPnLPct,
-      realizedPnLBase: pos.realizedPnL * fxCostToBase,
-      dividendsBase: pos.totalDividends * fxCostToBase,
+      realizedPnLBase: fxCostToBase != null ? pos.realizedPnL * fxCostToBase : null,
+      dividendsBase: fxCostToBase != null ? pos.totalDividends * fxCostToBase : null,
       priceUpdatedAt: quote?.updatedAt || null,
       name: quote?.name || pos.symbol,
+      fxMissing: fxToBase == null || fxCostToBase == null,
     });
   }
 
@@ -131,14 +137,17 @@ export function buildSummary(positions, priceCache, fxRates, baseCurrency) {
     positions: rows.sort((a, b) => (b.marketValueBase || 0) - (a.marketValueBase || 0)),
     allocationBySymbol: allocation,
     allocationByType,
+    fxWarnings: Array.from(fxWarnings),
   };
 }
 
+// Returns null (rather than assuming 1:1 parity) when no rate is known, so callers can
+// surface a warning instead of silently misstating converted values.
 function getRate(fxRates, from, to) {
   if (from === to) return 1;
   const key = `${from}${to}`;
   if (fxRates[key] != null) return fxRates[key];
   const inverseKey = `${to}${from}`;
   if (fxRates[inverseKey] != null && fxRates[inverseKey] !== 0) return 1 / fxRates[inverseKey];
-  return 1; // fallback: assume parity if rate unavailable, better than crashing
+  return null;
 }

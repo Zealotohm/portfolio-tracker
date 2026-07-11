@@ -102,9 +102,11 @@ export async function fetchSecFundNav(projId, apiKey) {
   };
 }
 
-// Refresh every tracked symbol and return an updated cache object.
+// Refresh every tracked symbol and return the updated cache plus any symbols that failed
+// to fetch (so the caller/UI can flag stale prices instead of silently keeping old data).
 export async function refreshAllPrices(holdings, existingCache, secApiKey) {
   const cache = { ...existingCache };
+  const failures = [];
   const cryptoIds = holdings.filter((h) => h.assetType === "crypto").map((h) => h.symbol);
   const thaiFunds = holdings.filter((h) => h.assetType === "thai_fund");
   const others = holdings.filter((h) => h.assetType !== "crypto" && h.assetType !== "thai_fund");
@@ -113,8 +115,10 @@ export async function refreshAllPrices(holdings, existingCache, secApiKey) {
   try {
     const cryptoQuotes = await fetchCoingeckoQuotes(cryptoIds, "usd");
     Object.assign(cache, cryptoQuotes);
+    for (const id of cryptoIds) if (!cryptoQuotes[id]) failures.push(id);
   } catch (e) {
     console.error("crypto refresh failed", e);
+    failures.push(...cryptoIds);
   }
 
   // Thai mutual funds via SEC Open API (one call per fund; no public batch endpoint)
@@ -123,6 +127,7 @@ export async function refreshAllPrices(holdings, existingCache, secApiKey) {
       cache[h.symbol] = await fetchSecFundNav(h.symbol, secApiKey);
     } catch (e) {
       console.error("SEC NAV refresh failed for", h.symbol, e);
+      failures.push(h.symbol);
     }
   }
 
@@ -132,8 +137,9 @@ export async function refreshAllPrices(holdings, existingCache, secApiKey) {
       cache[h.symbol] = await fetchYahooQuote(h.symbol);
     } catch (e) {
       console.error("yahoo refresh failed for", h.symbol, e);
+      failures.push(h.symbol);
     }
   }
 
-  return cache;
+  return { cache, failures };
 }
