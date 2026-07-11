@@ -403,7 +403,7 @@ function updateSymbolHint() {
     stock: "สัญลักษณ์ (Yahoo ticker เช่น AAPL, PTT.BK)",
     etf: "สัญลักษณ์ (Yahoo ticker เช่น VOO, SPY)",
     fund: "สัญลักษณ์ (Yahoo ticker ของกองทุนต่างประเทศ)",
-    thai_fund: "proj_id ของกองทุน (จาก SEC เช่น M0001_2560 - ไม่ใช่ชื่อย่อกองทุน)",
+    thai_fund: "ชื่อย่อกองทุน (เช่น KFINDIARMF) หรือ proj_id ก็ได้",
     crypto: "CoinGecko id (เช่น bitcoin, ethereum)",
   };
   label.firstChild.textContent = hints[type] || "สัญลักษณ์";

@@ -66,45 +66,107 @@ export async function fetchFxRate(from, to) {
 }
 
 // ---- SEC Thailand Open Data API (fund NAV) ----
-// Docs: https://secopendata.sec.or.th/sec-open-apis  (product group: fund)
-// Endpoint: GET https://api.sec.or.th/v2/fund/daily-info/nav
-// Auth: header "Ocp-Apim-Subscription-Key: <key>"
-// `symbol` for a Thai fund must be its SEC proj_id (project id, format like "M0001_2560"),
-// NOT its trading name (e.g. "KFINDIARMF") - the SEC API is indexed by proj_id.
-// You can look up a fund's proj_id via the SEC/AIMC mutual fund search:
-// https://www.thaimutualfund.com/AIMC/mutualFundCenter.jsp
+// Docs: https://api-portal.sec.or.th (products: "Fund Factsheet API", "Fund Daily Info API")
+// Auth: header "Ocp-Apim-Subscription-Key: <key>" on every request.
+//
+// Two things investors don't know up front but the API requires:
+// 1. NAV lookups are indexed by proj_id (e.g. "M0076_2561"), not the fund's trading name
+//    (e.g. "KFINDIARMF") that appears everywhere else (Settrade, AMC sites, statements).
+// 2. The NAV endpoint is date-specific (no "give me the latest" shortcut) and returns 204
+//    on non-trading days (weekends/holidays), so the caller must walk backward from today.
+//
+// To keep the UX the same as every other asset type (type the ticker you already know),
+// resolveSecProjId() below builds a name -> proj_id directory once (via the AMC + fund-list
+// endpoints) and caches it, so callers can keep using the trading name.
 const SEC_BASE = "https://api.sec.or.th";
+
+function secHeaders(apiKey) {
+  return { "Ocp-Apim-Subscription-Key": apiKey };
+}
+
+// Builds a fresh { byAbbr: { "KFINDIARMF": "M0076_2561", ... }, updatedAt } directory by
+// walking every AMC's fund list. Costs ~20-30 subrequests, so callers should cache the result
+// (see storage.js getSecFundDirectory/saveSecFundDirectory) and only rebuild occasionally.
+export async function buildSecFundDirectory(apiKey) {
+  if (!apiKey) throw new Error("SEC_API_KEY ยังไม่ได้ตั้งค่า (wrangler secret put SEC_API_KEY)");
+  const headers = secHeaders(apiKey);
+
+  const amcRes = await fetch(`${SEC_BASE}/FundFactsheet/fund/amc`, { headers });
+  if (!amcRes.ok) throw new Error(`SEC amc list fetch failed: ${amcRes.status}`);
+  const amcList = await amcRes.json();
+
+  const byAbbr = {};
+  const fundLists = await Promise.all(
+    amcList.map((amc) =>
+      fetch(`${SEC_BASE}/FundFactsheet/fund/amc/${amc.unique_id}`, { headers })
+        .then((r) => (r.ok ? r.json() : []))
+        .catch(() => [])
+    )
+  );
+  for (const funds of fundLists) {
+    for (const f of funds || []) {
+      if (f.proj_abbr_name && f.proj_id) byAbbr[f.proj_abbr_name.toUpperCase()] = f.proj_id;
+    }
+  }
+  return { byAbbr, updatedAt: new Date().toISOString() };
+}
+
+// A proj_id already looks like "M0076_2561" - letter + digits + underscore + year.
+// If the stored symbol already matches that shape, use it directly (skips directory lookup).
+function looksLikeProjId(symbol) {
+  return /^[A-Za-z]?\d{3,6}_\d{4}$/.test(symbol);
+}
+
+export async function resolveSecProjId(symbol, directory) {
+  if (looksLikeProjId(symbol)) return symbol;
+  return directory.byAbbr[symbol.toUpperCase()] || null;
+}
 
 export async function fetchSecFundNav(projId, apiKey) {
   if (!apiKey) throw new Error("SEC_API_KEY ยังไม่ได้ตั้งค่า (wrangler secret put SEC_API_KEY)");
-  const url = `${SEC_BASE}/v2/fund/daily-info/nav?proj_id=${encodeURIComponent(projId)}&latest=true`;
-  const res = await fetch(url, { headers: { "Ocp-Apim-Subscription-Key": apiKey } });
-  if (!res.ok) throw new Error(`SEC NAV fetch failed for ${projId}: ${res.status}`);
-  const data = await res.json();
+  const headers = secHeaders(apiKey);
+  let lastStatus = null;
+  let lastBody = "";
 
-  // The public spec for this endpoint's exact response shape isn't fully documented,
-  // so we defensively handle a few plausible shapes/field names here.
-  const record = Array.isArray(data?.data) ? data.data[0] : Array.isArray(data) ? data[0] : data;
-  const nav = record?.last_val ?? record?.sell_price ?? record?.nav ?? record?.value;
-  if (nav == null) {
-    throw new Error(
-      `SEC NAV response for ${projId} ไม่มี field ราคาที่รู้จัก (${JSON.stringify(record)}) — ` +
-        `อาจต้องแก้ชื่อ field ใน fetchSecFundNav() ให้ตรงกับ response จริง`
-    );
+  // NAV is published per trading day only; walk back up to 10 days to skip weekends/holidays.
+  for (let daysBack = 0; daysBack <= 10; daysBack++) {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - daysBack);
+    const dateStr = d.toISOString().slice(0, 10);
+    const res = await fetch(`${SEC_BASE}/FundDailyInfo/${encodeURIComponent(projId)}/dailynav/${dateStr}`, {
+      headers,
+    });
+    if (res.status === 204) continue; // no NAV published for this date, try an earlier day
+    if (!res.ok) {
+      lastStatus = res.status;
+      lastBody = await res.text().catch(() => "");
+      continue;
+    }
+    const data = await res.json();
+    const record = Array.isArray(data) ? data[0] : data;
+    const nav = record?.last_val ?? record?.sell_price ?? record?.nav ?? record?.value;
+    if (nav == null) continue;
+    return {
+      symbol: projId,
+      price: Number(nav),
+      currency: "THB",
+      name: record?.proj_name_th || record?.proj_name_en || projId,
+      updatedAt: new Date().toISOString(),
+      source: "sec",
+    };
   }
-  return {
-    symbol: projId,
-    price: Number(nav),
-    currency: "THB",
-    name: record?.proj_name_th || record?.proj_name_en || projId,
-    updatedAt: new Date().toISOString(),
-    source: "sec",
-  };
+  throw new Error(
+    lastStatus != null
+      ? `SEC dailynav fetch failed for ${projId}: ${lastStatus} ${lastBody.slice(0, 200)}`
+      : `SEC ไม่มี NAV ของ ${projId} ในช่วง 10 วันล่าสุด`
+  );
 }
 
 // Refresh every tracked symbol and return the updated cache plus any symbols that failed
 // to fetch (so the caller/UI can flag stale prices instead of silently keeping old data).
-export async function refreshAllPrices(holdings, existingCache, secApiKey) {
+// `secDirectory` is the cached name->proj_id map from storage.js; `onDirectoryStale` is called
+// (at most once) if a Thai fund symbol can't be resolved, so the caller can rebuild and retry.
+export async function refreshAllPrices(holdings, existingCache, secApiKey, secDirectory, onDirectoryStale) {
   const cache = { ...existingCache };
   const failures = [];
   const cryptoIds = holdings.filter((h) => h.assetType === "crypto").map((h) => h.symbol);
@@ -121,10 +183,23 @@ export async function refreshAllPrices(holdings, existingCache, secApiKey) {
     failures.push(...cryptoIds);
   }
 
-  // Thai mutual funds via SEC Open API (one call per fund; no public batch endpoint)
+  // Thai mutual funds via SEC Open API: resolve each trading name to its proj_id first
+  // (rebuilding the directory once if a symbol isn't found in the cached one), then fetch NAV.
+  let directory = secDirectory;
+  let rebuiltDirectory = false;
   for (const h of thaiFunds) {
     try {
-      cache[h.symbol] = await fetchSecFundNav(h.symbol, secApiKey);
+      let projId = await resolveSecProjId(h.symbol, directory);
+      if (!projId && !rebuiltDirectory) {
+        rebuiltDirectory = true;
+        directory = await buildSecFundDirectory(secApiKey);
+        if (onDirectoryStale) await onDirectoryStale(directory);
+        projId = await resolveSecProjId(h.symbol, directory);
+      }
+      if (!projId) {
+        throw new Error(`ไม่พบกองทุน "${h.symbol}" ใน SEC fund directory - ตรวจสอบชื่อย่อกองทุนอีกครั้ง`);
+      }
+      cache[h.symbol] = await fetchSecFundNav(projId, secApiKey);
     } catch (e) {
       console.error("SEC NAV refresh failed for", h.symbol, e);
       failures.push(h.symbol);

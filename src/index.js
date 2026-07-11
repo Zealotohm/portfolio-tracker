@@ -9,6 +9,8 @@ import {
   savePriceCache,
   getFxCache,
   saveFxCache,
+  getSecFundDirectory,
+  saveSecFundDirectory,
   uid,
 } from "./lib/storage.js";
 import { refreshAllPrices, fetchFxRate } from "./lib/priceProviders.js";
@@ -42,7 +44,14 @@ async function refreshPricesAndFx(env) {
   const { holdings, currencies } = collectHoldings(allTx);
 
   const priceCache = await getPriceCache(bucket);
-  const { cache: updatedPriceCache, failures } = await refreshAllPrices(holdings, priceCache, env.SEC_API_KEY);
+  const secDirectory = await getSecFundDirectory(bucket);
+  const { cache: updatedPriceCache, failures } = await refreshAllPrices(
+    holdings,
+    priceCache,
+    env.SEC_API_KEY,
+    secDirectory,
+    (rebuilt) => saveSecFundDirectory(bucket, rebuilt)
+  );
   await savePriceCache(bucket, updatedPriceCache);
 
   // Build fx rates needed: every holding currency -> base, and every quote currency -> base

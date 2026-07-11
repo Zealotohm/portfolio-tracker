@@ -63,6 +63,16 @@ export async function saveFxCache(bucket, cache) {
   return writeJSON(bucket, "fx/cache.json", cache);
 }
 
+// Maps a Thai fund's trading abbreviation (e.g. "KFINDIARMF") to its SEC proj_id, since
+// SEC's NAV endpoint is indexed by proj_id, not the name investors actually recognize.
+export async function getSecFundDirectory(bucket) {
+  return readJSON(bucket, "prices/sec-fund-directory.json", { byAbbr: {}, updatedAt: null });
+}
+
+export async function saveSecFundDirectory(bucket, directory) {
+  return writeJSON(bucket, "prices/sec-fund-directory.json", directory);
+}
+
 export function uid() {
   return crypto.randomUUID();
 }
