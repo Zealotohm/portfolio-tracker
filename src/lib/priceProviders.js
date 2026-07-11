@@ -85,6 +85,7 @@ function secHeaders(apiKey) {
 
 async function secGet(path, apiKey) {
   const res = await fetch(`${SEC_BASE}${path}`, { headers: secHeaders(apiKey) });
+  if (res.status === 204) return { items: [] }; // no matching records
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`SEC ${path} -> ${res.status} ${body.slice(0, 200)}`);
