@@ -122,26 +122,44 @@ function symbolSearchCandidates(symbol) {
   return [...new Set(candidates)].filter(Boolean);
 }
 
+// Last-resort candidate for a single share-class letter glued directly onto the name with no
+// delimiter (e.g. "SCBCHAA" = "SCBCHA" + "A" for Accumulation). Riskier than the delimited
+// cases above since we can't tell "a real trailing letter" from "a class marker" - only tried
+// after every safer candidate has failed, one letter at a time.
+function glueLetterCandidate(symbol) {
+  if (symbol.length > 4 && /[A-Za-z]$/.test(symbol)) return symbol.slice(0, -1);
+  return null;
+}
+
+// Searches one candidate term and picks the best project match from the results, requiring an
+// exact proj_abbr_name match when `requireExactAbbr` is set (used for the riskier glued-letter
+// fallback, where a loose partial match is too likely to be a wrong fund entirely).
+async function searchSecProject(term, apiKey, { requireExactAbbr } = {}) {
+  const data = await secGet(`/v2/fund/general-info/profiles?project_info=${encodeURIComponent(term)}&page_size=50`, apiKey);
+  const items = data?.items || [];
+  if (items.length === 0) return null;
+
+  const target = term.trim().toUpperCase();
+  const exactMatches = items.filter((f) => (f.proj_abbr_name || "").toUpperCase() === target);
+  if (requireExactAbbr && exactMatches.length === 0) return null;
+  // A trading name can be reused after a fund is reorganized/renamed, leaving old Canceled/
+  // Liquidated registrations in the search results alongside the current one - prefer the
+  // still-Registered project so we don't pick a defunct proj_id.
+  const pool = exactMatches.length > 0 ? exactMatches : items;
+  const best = pool.find((f) => f.fund_status === "Registered") || pool[0];
+  return best ? { best, items } : null;
+}
+
 // Returns { projId, fundClassName } (fundClassName is null when the match was unambiguous or a
 // specific class couldn't be pinned down) or null if nothing in SEC's database matches at all.
 export async function resolveSecProjId(symbol, apiKey) {
   if (looksLikeProjId(symbol)) return { projId: symbol, fundClassName: null };
   if (!apiKey) throw new Error("SEC_API_KEY ยังไม่ได้ตั้งค่า (wrangler secret put SEC_API_KEY)");
 
-  for (const term of symbolSearchCandidates(symbol)) {
-    const data = await secGet(`/v2/fund/general-info/profiles?project_info=${encodeURIComponent(term)}&page_size=50`, apiKey);
-    const items = data?.items || [];
-    if (items.length === 0) continue;
-
-    const target = term.trim().toUpperCase();
-    const exactMatches = items.filter((f) => (f.proj_abbr_name || "").toUpperCase() === target);
-    // A trading name can be reused after a fund is reorganized/renamed, leaving old Canceled/
-    // Liquidated registrations in the search results alongside the current one - prefer the
-    // still-Registered project so we don't pick a defunct proj_id.
-    const pool = exactMatches.length > 0 ? exactMatches : items;
-    const best = pool.find((f) => f.fund_status === "Registered") || pool[0];
-    if (!best) continue;
-
+  const attempt = async (term) => {
+    const found = await searchSecProject(term, apiKey);
+    if (!found) return null;
+    const { best, items } = found;
     // If this project has multiple share classes and the original (undecorated) symbol hints
     // at which one, try to match it; otherwise leave fundClassName null and let fetchSecFundNav
     // fall back to the plain/"main" class.
@@ -151,9 +169,20 @@ export async function resolveSecProjId(symbol, apiKey) {
       const cls = (f.fund_class_name || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
       return cls && cls !== "MAIN" && decoratedTarget.endsWith(cls);
     });
-
     return { projId: best.proj_id, fundClassName: classMatch?.fund_class_name || null };
+  };
+
+  for (const term of symbolSearchCandidates(symbol)) {
+    const result = await attempt(term);
+    if (result) return result;
   }
+
+  const glued = glueLetterCandidate(symbol);
+  if (glued) {
+    const found = await searchSecProject(glued, apiKey, { requireExactAbbr: true });
+    if (found) return { projId: found.best.proj_id, fundClassName: null };
+  }
+
   return null;
 }
 
@@ -227,14 +256,21 @@ export async function refreshAllPrices(holdings, existingCache, secApiKey, secDi
       const key = h.symbol.trim().toUpperCase();
       let resolved = directory.byAbbr[key];
       if (typeof resolved === "string") resolved = { projId: resolved, fundClassName: null }; // old cache shape
+
+      // A cached "unresolved" marker (with a cooldown) means don't burn subrequests re-running
+      // the multi-candidate search every single refresh for a symbol that's never found anyway -
+      // Workers has a per-invocation subrequest cap, and a growing portfolio adds up fast.
+      const onCooldown =
+        resolved?.unresolved && Date.now() - new Date(resolved.checkedAt).getTime() < 24 * 60 * 60 * 1000;
+      if (resolved?.unresolved && !onCooldown) resolved = null;
+
       if (!resolved) {
-        resolved = await resolveSecProjId(h.symbol, secApiKey);
-        if (resolved) {
-          directory.byAbbr[key] = resolved;
-          directoryChanged = true;
-        }
+        const found = await resolveSecProjId(h.symbol, secApiKey);
+        resolved = found || { unresolved: true, checkedAt: new Date().toISOString() };
+        directory.byAbbr[key] = resolved;
+        directoryChanged = true;
       }
-      if (!resolved) {
+      if (!resolved.projId) {
         throw new Error(`ไม่พบกองทุน "${h.symbol}" ใน SEC (ลองค้นด้วยชื่อย่อกองทุน หรือใส่ proj_id โดยตรง)`);
       }
       cache[h.symbol] = await fetchSecFundNav(resolved.projId, secApiKey, resolved.fundClassName);
