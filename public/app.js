@@ -342,11 +342,12 @@ function renderPositions() {
         <td class="label-cell">${escapeHtml(p.symbol)}<br/><span class="muted small">${assetTypeLabel(p.assetType)}</span></td>
         <td>${fmt(p.quantity, { maximumFractionDigits: 6, minimumFractionDigits: 0 })}</td>
         <td>${fmt(p.avgCost)} ${escapeHtml(p.currency)}</td>
-        <td>${p.currentPrice != null ? fmt(p.currentPrice) + " " + escapeHtml(p.quoteCurrency) : "–"}${priceDateNote}</td>
+        <td>${p.currentPrice != null ? fmt(p.currentPrice) + " " + escapeHtml(p.quoteCurrency) : "–"} <button type="button" class="icon-btn" data-action="edit-price" title="ตั้งราคาด้วยตนเอง">✎</button>${priceDateNote}</td>
         <td>${p.marketValueBase != null ? fmt(p.marketValueBase) + " " + escapeHtml(state.summary.baseCurrency) : "–"}${staleBadge}</td>
         <td class="${cls}">${p.unrealizedPnLBase != null ? (p.unrealizedPnLBase >= 0 ? "+" : "") + fmt(p.unrealizedPnLBase) : "–"}</td>
         <td class="${cls}">${p.unrealizedPnLPct != null ? (p.unrealizedPnLPct >= 0 ? "+" : "") + fmt(p.unrealizedPnLPct, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + "%" : "–"}</td>
       `;
+      tr.querySelector('[data-action="edit-price"]').onclick = () => openPriceModal(p);
       body.appendChild(tr);
     });
 }
@@ -439,6 +440,37 @@ async function refreshPrices() {
     btn.textContent = "↻ อัปเดตราคา";
   }
 }
+
+// ---------- Manual price override ----------
+const priceModal = document.getElementById("price-modal");
+let priceModalSymbol = null;
+
+function openPriceModal(p) {
+  priceModalSymbol = p.symbol;
+  document.getElementById("price-modal-symbol").textContent = p.symbol;
+  document.getElementById("price-input").value = p.currentPrice ?? "";
+  document.getElementById("price-currency-input").value = p.quoteCurrency || p.currency;
+  document.getElementById("price-date-input").value = new Date().toISOString().slice(0, 10);
+  priceModal.classList.remove("hidden");
+}
+document.getElementById("btn-cancel-price").addEventListener("click", () => {
+  priceModal.classList.add("hidden");
+});
+document.getElementById("price-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const body = {
+    price: document.getElementById("price-input").value,
+    currency: document.getElementById("price-currency-input").value.trim().toUpperCase(),
+    date: document.getElementById("price-date-input").value,
+  };
+  try {
+    await api(`/api/prices/${encodeURIComponent(priceModalSymbol)}`, { method: "PUT", body: JSON.stringify(body) });
+    priceModal.classList.add("hidden");
+    await loadSummaryAndTx();
+  } catch (err) {
+    alert("บันทึกไม่สำเร็จ: " + err.message);
+  }
+});
 
 // ---------- Modals ----------
 const txModal = document.getElementById("tx-modal");

@@ -318,6 +318,37 @@ const routes = [
     },
   },
   {
+    method: "PUT",
+    pattern: /^\/api\/prices\/([^/]+)$/,
+    // Manually set a symbol's current price - for assets that can't be auto-fetched (e.g. a
+    // Thai fund whose trading name doesn't resolve on SEC). Persists like any other quote: the
+    // automated refresh will overwrite it again once/if that symbol starts resolving on its own.
+    handler: async (req, env, [symbolEncoded]) => {
+      const symbol = decodeURIComponent(symbolEncoded);
+      const body = await req.json();
+      const price = Number(body.price);
+      if (!Number.isFinite(price) || price <= 0) {
+        return json({ error: "ราคาต้องเป็นตัวเลขมากกว่า 0" }, { status: 400 });
+      }
+      const bucket = env.DATA_BUCKET;
+      const priceCache = await getPriceCache(bucket);
+      const quote = {
+        symbol,
+        price,
+        currency: (body.currency || priceCache[symbol]?.currency || "THB").toUpperCase(),
+        name: priceCache[symbol]?.name || symbol,
+        date: body.date || new Date().toISOString().slice(0, 10),
+        updatedAt: new Date().toISOString(),
+        source: "manual",
+      };
+      priceCache[symbol] = quote;
+      await savePriceCache(bucket, priceCache);
+      const priceHistory = await getPriceHistory(bucket);
+      await savePriceHistory(bucket, mergePriceHistory(priceHistory, { [symbol]: quote }));
+      return json(quote);
+    },
+  },
+  {
     method: "GET",
     pattern: /^\/api\/settings$/,
     handler: async (req, env) => json(await getSettings(env.DATA_BUCKET)),

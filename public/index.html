@@ -194,6 +194,25 @@
   </div>
 </div>
 
+<!-- Manual Price Modal -->
+<div class="modal-backdrop hidden" id="price-modal">
+  <div class="modal modal-sm">
+    <h2>ตั้งราคาด้วยตนเอง — <span id="price-modal-symbol"></span></h2>
+    <p class="muted small">ใช้เมื่อระบบดึงราคาอัตโนมัติไม่ได้ ราคานี้จะถูกแทนที่เองเมื่อระบบดึงราคาอัตโนมัติสำเร็จในอนาคต</p>
+    <form id="price-form">
+      <div class="form-row">
+        <label>ราคาต่อหน่วย<input type="number" step="any" id="price-input" required /></label>
+        <label>สกุลเงิน<input type="text" id="price-currency-input" required /></label>
+      </div>
+      <label class="full">ณ วันที่<input type="date" id="price-date-input" required /></label>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="btn-cancel-price">ยกเลิก</button>
+        <button type="submit" class="btn-primary">บันทึก</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- App Name Modal -->
 <div class="modal-backdrop hidden" id="appname-modal">
   <div class="modal modal-sm">
