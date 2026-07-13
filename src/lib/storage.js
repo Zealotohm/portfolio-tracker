@@ -73,6 +73,27 @@ export async function saveSecFundDirectory(bucket, directory) {
   return writeJSON(bucket, "prices/sec-fund-directory.json", directory);
 }
 
+// App-level display settings (currently just the app name, editable in the UI).
+export async function getSettings(bucket) {
+  return readJSON(bucket, "meta/settings.json", { appName: "SabaiPort" });
+}
+
+export async function saveSettings(bucket, settings) {
+  return writeJSON(bucket, "meta/settings.json", settings);
+}
+
+// Per-symbol NAV/price history: { [symbol]: [{date: "YYYY-MM-DD", price, currency}, ...] },
+// each array sorted ascending by date. This is what lets the UI show "last known price as of
+// <date>" when a fund's NAV for today hasn't been published yet, and survives independently of
+// the point-in-time price cache.
+export async function getPriceHistory(bucket) {
+  return readJSON(bucket, "prices/history.json", {});
+}
+
+export async function savePriceHistory(bucket, history) {
+  return writeJSON(bucket, "prices/history.json", history);
+}
+
 export function uid() {
   return crypto.randomUUID();
 }

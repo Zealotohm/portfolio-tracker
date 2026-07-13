@@ -11,6 +11,10 @@ import {
   saveFxCache,
   getSecFundDirectory,
   saveSecFundDirectory,
+  getSettings,
+  saveSettings,
+  getPriceHistory,
+  savePriceHistory,
   uid,
 } from "./lib/storage.js";
 import { refreshAllPrices, fetchFxRate } from "./lib/priceProviders.js";
@@ -38,6 +42,24 @@ function collectHoldings(allTx) {
   return { holdings: Array.from(map.values()), currencies: Array.from(currencies) };
 }
 
+// Merges freshly-fetched quotes into the { [symbol]: [{date, price, currency}] } history
+// archive: one entry per symbol per date (a later fetch for the same date overwrites it),
+// kept sorted ascending and capped so the file doesn't grow unbounded.
+function mergePriceHistory(history, priceCache) {
+  const next = { ...history };
+  for (const [symbol, quote] of Object.entries(priceCache)) {
+    if (!quote || quote.price == null || !quote.date || quote.source === "history") continue;
+    const series = [...(next[symbol] || [])];
+    const idx = series.findIndex((e) => e.date === quote.date);
+    const entry = { date: quote.date, price: quote.price, currency: quote.currency };
+    if (idx >= 0) series[idx] = entry;
+    else series.push(entry);
+    series.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+    next[symbol] = series.slice(-500);
+  }
+  return next;
+}
+
 async function refreshPricesAndFx(env) {
   const bucket = env.DATA_BUCKET;
   const allTx = await getAllTransactions(bucket);
@@ -45,14 +67,17 @@ async function refreshPricesAndFx(env) {
 
   const priceCache = await getPriceCache(bucket);
   const secDirectory = await getSecFundDirectory(bucket);
+  const priceHistory = await getPriceHistory(bucket);
   const { cache: updatedPriceCache, failures } = await refreshAllPrices(
     holdings,
     priceCache,
     env.SEC_API_KEY,
     secDirectory,
-    (rebuilt) => saveSecFundDirectory(bucket, rebuilt)
+    (rebuilt) => saveSecFundDirectory(bucket, rebuilt),
+    priceHistory
   );
   await savePriceCache(bucket, updatedPriceCache);
+  await savePriceHistory(bucket, mergePriceHistory(priceHistory, updatedPriceCache));
 
   // Build fx rates needed: every holding currency -> base, and every quote currency -> base
   const base = env.BASE_CURRENCY || "USD";
@@ -282,6 +307,22 @@ const routes = [
       return json({ prices: priceCache, fx: fxCache });
     },
   },
+  {
+    method: "GET",
+    pattern: /^\/api\/settings$/,
+    handler: async (req, env) => json(await getSettings(env.DATA_BUCKET)),
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/settings$/,
+    handler: async (req, env) => {
+      const body = await req.json();
+      const current = await getSettings(env.DATA_BUCKET);
+      const updated = { ...current, appName: body.appName?.trim() || current.appName };
+      await saveSettings(env.DATA_BUCKET, updated);
+      return json(updated);
+    },
+  },
 ];
 
 export default {
@@ -289,7 +330,10 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname.startsWith("/api/")) {
-      if (url.pathname !== "/api/login" && !isAuthed(request, env)) {
+      // Settings are exposed read-only pre-login too, since the login screen shows the app name.
+      const isPublicRoute =
+        url.pathname === "/api/login" || (url.pathname === "/api/settings" && request.method === "GET");
+      if (!isPublicRoute && !isAuthed(request, env)) {
         return unauthorized();
       }
       for (const route of routes) {

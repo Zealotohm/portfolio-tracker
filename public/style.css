@@ -113,6 +113,8 @@ button { font-family: var(--font-body); cursor: pointer; border: none; }
   gap: 20px;
 }
 .sidebar .brand { justify-content: flex-start; margin-bottom: 4px; }
+.brand-edit { font-size: 0.75rem; opacity: 0.4; cursor: pointer; margin-left: 2px; }
+.brand-edit:hover { opacity: 1; color: var(--accent); }
 
 .portfolio-tree { flex: 1; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
 .portfolio-item {
@@ -231,6 +233,21 @@ tr:last-child td { border-bottom: none; }
 .icon-btn:hover { color: var(--loss); }
 .icon-btn[data-action="edit"]:hover { color: var(--accent); }
 .icon-btn + .icon-btn { margin-left: 10px; }
+
+.pagination-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.page-size-select { display: flex; align-items: center; gap: 6px; font-size: 0.82rem; color: var(--text-dim); }
+.page-size-select select { width: auto; padding: 5px 8px; }
+.page-nav { display: flex; align-items: center; gap: 10px; }
+.page-nav .btn-ghost { padding: 6px 12px; font-size: 0.82rem; }
+.page-nav .btn-ghost:disabled { opacity: 0.35; cursor: default; }
+.page-nav .btn-ghost:disabled:hover { color: var(--text-dim); border-color: var(--border); }
 .badge-warn {
   display: inline-block;
   font-size: 0.72rem;

@@ -22,11 +22,15 @@ export async function fetchYahooQuote(symbol) {
   const result = data?.chart?.result?.[0];
   if (!result) throw new Error(`No data for symbol ${symbol}`);
   const meta = result.meta;
+  const date = meta.regularMarketTime
+    ? new Date(meta.regularMarketTime * 1000).toISOString().slice(0, 10)
+    : new Date().toISOString().slice(0, 10);
   return {
     symbol,
     price: meta.regularMarketPrice,
     currency: meta.currency,
     name: meta.longName || meta.shortName || symbol,
+    date,
     updatedAt: new Date().toISOString(),
     source: "yahoo",
   };
@@ -41,6 +45,7 @@ export async function fetchCoingeckoQuotes(ids, vsCurrency = "usd") {
   if (!res.ok) throw new Error(`CoinGecko fetch failed: ${res.status}`);
   const data = await res.json();
   const out = {};
+  const today = new Date().toISOString().slice(0, 10);
   for (const id of ids) {
     if (data[id]) {
       out[id] = {
@@ -48,6 +53,7 @@ export async function fetchCoingeckoQuotes(ids, vsCurrency = "usd") {
         price: data[id][vsCurrency],
         currency: vsCurrency.toUpperCase(),
         name: id,
+        date: today,
         updatedAt: new Date().toISOString(),
         source: "coingecko",
       };
@@ -141,6 +147,7 @@ export async function fetchSecFundNav(projId, apiKey) {
     price: Number(latest.last_val),
     currency: "THB",
     name: projId,
+    date: latest.nav_date,
     updatedAt: new Date().toISOString(),
     source: "sec",
   };
@@ -150,8 +157,11 @@ export async function fetchSecFundNav(projId, apiKey) {
 // to fetch (so the caller/UI can flag stale prices instead of silently keeping old data).
 // `secDirectory` is the cached { byAbbr: { SYMBOL: proj_id } } map from storage.js;
 // `onDirectoryUpdate` persists it whenever a new symbol gets resolved, so future refreshes
-// skip the name-search call for symbols we've already looked up.
-export async function refreshAllPrices(holdings, existingCache, secApiKey, secDirectory, onDirectoryUpdate) {
+// skip the name-search call for symbols we've already looked up. `priceHistory` is the
+// { [symbol]: [{date, price, currency}] } archive from storage.js: when a symbol fails outright
+// (e.g. a fund's NAV hasn't been published yet, or a provider is briefly down), we fall back to
+// its most recent historical entry instead of showing nothing.
+export async function refreshAllPrices(holdings, existingCache, secApiKey, secDirectory, onDirectoryUpdate, priceHistory = {}) {
   const cache = { ...existingCache };
   const failures = [];
   const cryptoIds = holdings.filter((h) => h.assetType === "crypto").map((h) => h.symbol);
@@ -203,6 +213,17 @@ export async function refreshAllPrices(holdings, existingCache, secApiKey, secDi
     } catch (e) {
       console.error("yahoo refresh failed for", h.symbol, e);
       failures.push(h.symbol);
+    }
+  }
+
+  // If a symbol failed outright and we have no usable cached quote for it at all, fall back to
+  // the most recent historical price rather than showing nothing.
+  for (const symbol of failures) {
+    if (cache[symbol]) continue;
+    const hist = priceHistory[symbol];
+    if (hist && hist.length > 0) {
+      const last = hist[hist.length - 1];
+      cache[symbol] = { symbol, price: last.price, currency: last.currency, name: symbol, date: last.date, updatedAt: new Date().toISOString(), source: "history", stale: true };
     }
   }
 

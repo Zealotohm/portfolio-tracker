@@ -7,6 +7,9 @@ const state = {
   charts: {},
   editingTxId: null,
   editingPortfolioId: null,
+  settings: { appName: "SabaiPort" },
+  txPage: 1,
+  txPageSize: Number(localStorage.getItem("tx_page_size")) || 10,
 };
 
 const BASE_CCY_FALLBACK = "THB";
@@ -35,6 +38,44 @@ async function api(path, options = {}) {
   }
   return res.json();
 }
+
+// ---------- Settings (app name) ----------
+function applySettingsToDom() {
+  const name = state.settings.appName || "SabaiPort";
+  document.getElementById("brand-name-login").textContent = name;
+  document.getElementById("brand-name-app").textContent = name;
+  document.getElementById("page-title").textContent = `${name} — Portfolio Tracker`;
+}
+
+async function loadSettings() {
+  try {
+    state.settings = await fetch("/api/settings").then((r) => r.json());
+  } catch (e) {
+    // keep default appName if this fails - not critical enough to block the login screen
+  }
+  applySettingsToDom();
+}
+
+const appnameModal = document.getElementById("appname-modal");
+document.getElementById("btn-edit-appname").addEventListener("click", () => {
+  document.getElementById("appname-input").value = state.settings.appName || "SabaiPort";
+  appnameModal.classList.remove("hidden");
+});
+document.getElementById("btn-cancel-appname").addEventListener("click", () => {
+  appnameModal.classList.add("hidden");
+});
+document.getElementById("appname-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const appName = document.getElementById("appname-input").value.trim();
+  if (!appName) return;
+  try {
+    state.settings = await api("/api/settings", { method: "PUT", body: JSON.stringify({ appName }) });
+    applySettingsToDom();
+    appnameModal.classList.add("hidden");
+  } catch (err) {
+    alert("บันทึกไม่สำเร็จ: " + err.message);
+  }
+});
 
 // ---------- Login ----------
 function showLogin(errorMsg) {
@@ -173,6 +214,7 @@ async function loadSummaryAndTx() {
     state.summary = await api(`/api/summary/${state.currentId}?includeSub=${includeSub}`);
     state.transactions = await api(`/api/transactions/${state.currentId}`);
   }
+  state.txPage = 1;
   renderSummary();
   renderTicker();
   renderCharts();
@@ -291,11 +333,16 @@ function renderPositions() {
       const cls = p.unrealizedPnLBase >= 0 ? "gain" : "loss";
       const tr = document.createElement("tr");
       const staleBadge = p.fxMissing ? ` <span class="badge-warn" title="ไม่มีอัตราแลกเปลี่ยนล่าสุด ตัวเลขนี้อาจไม่ถูกต้อง">⚠ FX</span>` : "";
+      const today = new Date().toISOString().slice(0, 10);
+      const priceDateNote =
+        p.currentPrice != null && p.priceDate
+          ? `<br/><span class="muted small">${p.priceDate === today ? "" : "ณ วันที่ " + p.priceDate}${p.priceStale ? " (ราคาย้อนหลัง)" : ""}</span>`
+          : "";
       tr.innerHTML = `
         <td class="label-cell">${escapeHtml(p.symbol)}<br/><span class="muted small">${assetTypeLabel(p.assetType)}</span></td>
         <td>${fmt(p.quantity, { maximumFractionDigits: 6, minimumFractionDigits: 0 })}</td>
         <td>${fmt(p.avgCost)} ${escapeHtml(p.currency)}</td>
-        <td>${p.currentPrice != null ? fmt(p.currentPrice) + " " + escapeHtml(p.quoteCurrency) : "–"}</td>
+        <td>${p.currentPrice != null ? fmt(p.currentPrice) + " " + escapeHtml(p.quoteCurrency) : "–"}${priceDateNote}</td>
         <td>${p.marketValueBase != null ? fmt(p.marketValueBase) + " " + escapeHtml(state.summary.baseCurrency) : "–"}${staleBadge}</td>
         <td class="${cls}">${p.unrealizedPnLBase != null ? (p.unrealizedPnLBase >= 0 ? "+" : "") + fmt(p.unrealizedPnLBase) : "–"}</td>
         <td class="${cls}">${p.unrealizedPnLPct != null ? (p.unrealizedPnLPct >= 0 ? "+" : "") + fmt(p.unrealizedPnLPct, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + "%" : "–"}</td>
@@ -311,9 +358,13 @@ function renderTransactions() {
   document.getElementById("btn-add-tx").disabled = disabled;
   document.getElementById("btn-add-tx").title = disabled ? "เลือก portfolio ก่อนเพื่อเพิ่มรายการ" : "";
 
-  [...state.transactions]
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
-    .forEach((t) => {
+  const sorted = [...state.transactions].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const totalPages = Math.max(1, Math.ceil(sorted.length / state.txPageSize));
+  state.txPage = Math.min(Math.max(1, state.txPage), totalPages);
+  const start = (state.txPage - 1) * state.txPageSize;
+  const pageItems = sorted.slice(start, start + state.txPageSize);
+
+  pageItems.forEach((t) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${t.date}</td>
@@ -332,8 +383,29 @@ function renderTransactions() {
       tr.querySelector('[data-action="edit"]').onclick = () => openEditTx(t);
       tr.querySelector('[data-action="delete"]').onclick = () => deleteTx(t.id);
       body.appendChild(tr);
-    });
+  });
+
+  document.getElementById("tx-page-info").textContent =
+    sorted.length === 0 ? "ไม่มีรายการ" : `หน้า ${state.txPage} จาก ${totalPages} (ทั้งหมด ${sorted.length} รายการ)`;
+  document.getElementById("tx-page-prev").disabled = state.txPage <= 1;
+  document.getElementById("tx-page-next").disabled = state.txPage >= totalPages;
+  document.getElementById("tx-page-size").value = String(state.txPageSize);
 }
+
+document.getElementById("tx-page-prev").addEventListener("click", () => {
+  state.txPage -= 1;
+  renderTransactions();
+});
+document.getElementById("tx-page-next").addEventListener("click", () => {
+  state.txPage += 1;
+  renderTransactions();
+});
+document.getElementById("tx-page-size").addEventListener("change", (e) => {
+  state.txPageSize = Number(e.target.value);
+  localStorage.setItem("tx_page_size", String(state.txPageSize));
+  state.txPage = 1;
+  renderTransactions();
+});
 
 function txTypeLabel(t) {
   return { buy: "ซื้อ", sell: "ขาย", dividend: "ปันผล" }[t] || t;
@@ -499,7 +571,8 @@ function escapeHtml(str) {
 }
 
 // ---------- Init ----------
-(function init() {
+(async function init() {
+  await loadSettings();
   if (state.password) {
     document.getElementById("login-screen").classList.add("hidden");
     document.getElementById("app").classList.remove("hidden");

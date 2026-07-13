@@ -101,6 +101,8 @@ export function buildSummary(positions, priceCache, fxRates, baseCurrency) {
       realizedPnLBase: fxCostToBase != null ? pos.realizedPnL * fxCostToBase : null,
       dividendsBase: fxCostToBase != null ? pos.totalDividends * fxCostToBase : null,
       priceUpdatedAt: quote?.updatedAt || null,
+      priceDate: quote?.date || null,
+      priceStale: quote?.stale || false,
       name: quote?.name || pos.symbol,
       fxMissing: fxToBase == null || fxCostToBase == null,
     });
