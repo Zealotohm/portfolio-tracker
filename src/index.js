@@ -241,7 +241,17 @@ const routes = [
       const list = await getTransactions(env.DATA_BUCKET, portfolioId);
       const idx = list.findIndex((t) => t.id === txId);
       if (idx === -1) return json({ error: "not found" }, { status: 404 });
-      list[idx] = { ...list[idx], ...body, id: txId };
+      // Coerce the same fields POST does - the edit form sends these as strings (HTML input
+      // values), and leaving them uncoerced corrupts computePositions()'s arithmetic (JS's `+`
+      // does string concatenation, not addition, once any operand is a string).
+      list[idx] = {
+        ...list[idx],
+        ...body,
+        id: txId,
+        quantity: body.quantity !== undefined ? Number(body.quantity) : list[idx].quantity,
+        price: body.price !== undefined ? Number(body.price) : list[idx].price,
+        fees: body.fees !== undefined ? Number(body.fees) : list[idx].fees,
+      };
       await saveTransactions(env.DATA_BUCKET, portfolioId, list);
       return json(list[idx]);
     },

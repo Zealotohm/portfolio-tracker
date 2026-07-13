@@ -6,7 +6,11 @@ export function computePositions(transactions) {
   const sorted = [...transactions].sort((a, b) => new Date(a.date) - new Date(b.date));
   const bySymbol = {};
 
-  for (const tx of sorted) {
+  for (const rawTx of sorted) {
+    // Defensive: some stored transactions have quantity/price/fees as strings (a prior bug in
+    // the edit endpoint). JS's `+` concatenates instead of adding once any operand is a string,
+    // which silently corrupts every downstream total - so always work with real numbers here.
+    const tx = { ...rawTx, quantity: Number(rawTx.quantity), price: Number(rawTx.price), fees: Number(rawTx.fees || 0) };
     const key = tx.symbol;
     if (!bySymbol[key]) {
       bySymbol[key] = {

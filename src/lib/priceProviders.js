@@ -105,22 +105,59 @@ function looksLikeProjId(symbol) {
   return /^[A-Za-z]?\d{3,6}_\d{4}$/.test(symbol);
 }
 
-export async function resolveSecProjId(symbol, apiKey) {
-  if (looksLikeProjId(symbol)) return symbol;
-  if (!apiKey) throw new Error("SEC_API_KEY ยังไม่ได้ตั้งค่า (wrangler secret put SEC_API_KEY)");
-  const data = await secGet(`/v2/fund/general-info/profiles?project_info=${encodeURIComponent(symbol)}&page_size=20`, apiKey);
-  const items = data?.items || [];
-  const target = symbol.trim().toUpperCase();
-  const exactMatches = items.filter((f) => (f.proj_abbr_name || "").toUpperCase() === target);
-  // A trading name can be reused after a fund is reorganized/renamed, leaving old Canceled/
-  // Liquidated registrations in the search results alongside the current one - prefer the
-  // still-Registered project so we don't pick a defunct proj_id.
-  const best =
-    exactMatches.find((f) => f.fund_status === "Registered") || exactMatches[0] || items[0];
-  return best?.proj_id || null;
+// Brokers often display a fund's trading symbol with a share-class marker glued on
+// (e.g. "SCBSEMI(A)", "KFAEQ-THAIESGX-L", "SCBTAPX(LTFA)") that isn't part of the base name
+// SEC's own database searches against - only the underlying project's proj_abbr_name is. This
+// generates progressively shorter candidates by stripping trailing class markers, so the base
+// project can still be found even when the exact decorated string can't be.
+function symbolSearchCandidates(symbol) {
+  const candidates = [symbol];
+  const parenMatch = symbol.match(/^(.*?)\s*\([^)]*\)\s*$/);
+  if (parenMatch && parenMatch[1]) candidates.push(parenMatch[1].trim());
+  let base = symbol;
+  while (base.includes("-")) {
+    base = base.slice(0, base.lastIndexOf("-")).trim();
+    if (base) candidates.push(base);
+  }
+  return [...new Set(candidates)].filter(Boolean);
 }
 
-export async function fetchSecFundNav(projId, apiKey) {
+// Returns { projId, fundClassName } (fundClassName is null when the match was unambiguous or a
+// specific class couldn't be pinned down) or null if nothing in SEC's database matches at all.
+export async function resolveSecProjId(symbol, apiKey) {
+  if (looksLikeProjId(symbol)) return { projId: symbol, fundClassName: null };
+  if (!apiKey) throw new Error("SEC_API_KEY ยังไม่ได้ตั้งค่า (wrangler secret put SEC_API_KEY)");
+
+  for (const term of symbolSearchCandidates(symbol)) {
+    const data = await secGet(`/v2/fund/general-info/profiles?project_info=${encodeURIComponent(term)}&page_size=50`, apiKey);
+    const items = data?.items || [];
+    if (items.length === 0) continue;
+
+    const target = term.trim().toUpperCase();
+    const exactMatches = items.filter((f) => (f.proj_abbr_name || "").toUpperCase() === target);
+    // A trading name can be reused after a fund is reorganized/renamed, leaving old Canceled/
+    // Liquidated registrations in the search results alongside the current one - prefer the
+    // still-Registered project so we don't pick a defunct proj_id.
+    const pool = exactMatches.length > 0 ? exactMatches : items;
+    const best = pool.find((f) => f.fund_status === "Registered") || pool[0];
+    if (!best) continue;
+
+    // If this project has multiple share classes and the original (undecorated) symbol hints
+    // at which one, try to match it; otherwise leave fundClassName null and let fetchSecFundNav
+    // fall back to the plain/"main" class.
+    const classCandidates = items.filter((f) => f.proj_id === best.proj_id);
+    const decoratedTarget = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const classMatch = classCandidates.find((f) => {
+      const cls = (f.fund_class_name || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+      return cls && cls !== "MAIN" && decoratedTarget.endsWith(cls);
+    });
+
+    return { projId: best.proj_id, fundClassName: classMatch?.fund_class_name || null };
+  }
+  return null;
+}
+
+export async function fetchSecFundNav(projId, apiKey, fundClassName = null) {
   if (!apiKey) throw new Error("SEC_API_KEY ยังไม่ได้ตั้งค่า (wrangler secret put SEC_API_KEY)");
   const end = new Date();
   const start = new Date(end);
@@ -137,8 +174,11 @@ export async function fetchSecFundNav(projId, apiKey) {
     throw new Error(`SEC ไม่มี NAV ของ ${projId} ในช่วง ${startStr}..${endStr}`);
   }
 
-  // Prefer the plain/"main" share class when a fund has multiple classes, then take the newest date.
-  const preferred = items.filter((i) => !i.fund_class_name || ["main", "-"].includes(i.fund_class_name));
+  // If a specific share class was identified (e.g. from a decorated symbol like "...(A)"), use
+  // that class's NAV; otherwise prefer the plain/"main" class, then take the newest date.
+  const preferred = fundClassName
+    ? items.filter((i) => i.fund_class_name === fundClassName)
+    : items.filter((i) => !i.fund_class_name || ["main", "-"].includes(i.fund_class_name));
   const pool = preferred.length > 0 ? preferred : items;
   const latest = pool.reduce((a, b) => (a.nav_date > b.nav_date ? a : b));
 
@@ -185,18 +225,19 @@ export async function refreshAllPrices(holdings, existingCache, secApiKey, secDi
   for (const h of thaiFunds) {
     try {
       const key = h.symbol.trim().toUpperCase();
-      let projId = looksLikeProjId(h.symbol) ? h.symbol : directory.byAbbr[key];
-      if (!projId) {
-        projId = await resolveSecProjId(h.symbol, secApiKey);
-        if (projId) {
-          directory.byAbbr[key] = projId;
+      let resolved = directory.byAbbr[key];
+      if (typeof resolved === "string") resolved = { projId: resolved, fundClassName: null }; // old cache shape
+      if (!resolved) {
+        resolved = await resolveSecProjId(h.symbol, secApiKey);
+        if (resolved) {
+          directory.byAbbr[key] = resolved;
           directoryChanged = true;
         }
       }
-      if (!projId) {
+      if (!resolved) {
         throw new Error(`ไม่พบกองทุน "${h.symbol}" ใน SEC (ลองค้นด้วยชื่อย่อกองทุน หรือใส่ proj_id โดยตรง)`);
       }
-      cache[h.symbol] = await fetchSecFundNav(projId, secApiKey);
+      cache[h.symbol] = await fetchSecFundNav(resolved.projId, secApiKey, resolved.fundClassName);
     } catch (e) {
       console.error("SEC NAV refresh failed for", h.symbol, e);
       failures.push(h.symbol);
