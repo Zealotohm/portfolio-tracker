@@ -286,7 +286,19 @@ export async function refreshAllPrices(holdings, existingCache, secApiKey, secDi
   // Stocks/ETF/global funds one call each (Yahoo has no clean batch endpoint on the public chart API)
   for (const h of others) {
     try {
-      cache[h.symbol] = await fetchYahooQuote(h.symbol);
+      const quote = await fetchYahooQuote(h.symbol);
+      // A bare ticker without its exchange suffix (e.g. a Thai stock entered as "SAT" instead of
+      // "SAT.BK") can silently collide with an unrelated stock on another exchange - Yahoo just
+      // returns that instead of erroring. If the user's declared transaction currency doesn't
+      // match what came back, it's almost certainly the wrong company, so reject it rather than
+      // showing a confidently wrong price.
+      if (h.currency && quote.currency && h.currency.toUpperCase() !== quote.currency.toUpperCase()) {
+        throw new Error(
+          `Yahoo ส่งราคากลับมาเป็น ${quote.currency} แต่ transaction ระบุสกุลเงิน ${h.currency} - ` +
+            `ticker "${h.symbol}" อาจชนกับหุ้นตลาดอื่น (เช่น หุ้นไทยต้องมี .BK ต่อท้าย เช่น SAT.BK)`
+        );
+      }
+      cache[h.symbol] = quote;
     } catch (e) {
       console.error("yahoo refresh failed for", h.symbol, e);
       failures.push(h.symbol);

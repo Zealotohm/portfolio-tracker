@@ -28,6 +28,8 @@ function json(data, init = {}) {
 }
 
 // Collect every distinct symbol/assetType/currency across all portfolios, for price+fx refresh.
+// `currency` here is the currency the user declared on their transactions - carried through so
+// the price fetch can sanity-check the quote it gets back actually matches (see priceProviders.js).
 function collectHoldings(allTx) {
   const map = new Map();
   const currencies = new Set();
@@ -35,7 +37,7 @@ function collectHoldings(allTx) {
     for (const tx of list) {
       currencies.add(tx.currency);
       if (!map.has(tx.symbol)) {
-        map.set(tx.symbol, { symbol: tx.symbol, assetType: tx.assetType });
+        map.set(tx.symbol, { symbol: tx.symbol, assetType: tx.assetType, currency: tx.currency });
       }
     }
   }
