@@ -137,6 +137,10 @@ button { font-family: var(--font-body); cursor: pointer; border: none; }
 .portfolio-item .item-actions .del:hover { color: var(--loss); }
 
 .sidebar-footer { display: flex; flex-direction: column; gap: 8px; }
+.account-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.link-btn { color: var(--text-dim); font-size: 0.78rem; cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.link-btn:hover { color: var(--accent); }
+.bootstrap-note { margin: -8px 0 4px; text-align: left; }
 
 /* ---------- Main content ---------- */
 .main { padding: 28px 36px 60px; max-width: 1180px; }

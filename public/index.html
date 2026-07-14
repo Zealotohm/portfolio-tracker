@@ -19,10 +19,21 @@
       <span class="brand-name" id="brand-name-login">SabaiPort</span>
     </div>
     <p class="login-sub">Portfolio Tracker ส่วนตัวของคุณ</p>
-    <form id="login-form">
-      <input type="password" id="login-password" placeholder="รหัสผ่าน" autocomplete="current-password" />
+
+    <form id="bootstrap-form" class="hidden">
+      <p class="muted small bootstrap-note">ยังไม่มีบัญชีผู้ใช้ในระบบ — ตั้งค่าบัญชี admin คนแรกที่นี่</p>
+      <input type="password" id="bootstrap-app-password" placeholder="รหัสผ่านแอป (APP_PASSWORD)" autocomplete="off" required />
+      <input type="text" id="bootstrap-username" placeholder="ชื่อผู้ใช้ (admin)" autocomplete="username" required />
+      <input type="password" id="bootstrap-password" placeholder="รหัสผ่านใหม่ (อย่างน้อย 6 ตัวอักษร)" autocomplete="new-password" required />
+      <button type="submit">สร้างบัญชี admin</button>
+    </form>
+
+    <form id="login-form" class="hidden">
+      <input type="text" id="login-username" placeholder="ชื่อผู้ใช้" autocomplete="username" required />
+      <input type="password" id="login-password" placeholder="รหัสผ่าน" autocomplete="current-password" required />
       <button type="submit">เข้าสู่ระบบ</button>
     </form>
+
     <p id="login-error" class="login-error"></p>
   </div>
 </div>
@@ -46,6 +57,11 @@
     <div class="sidebar-footer">
       <span id="last-updated" class="muted small"></span>
       <button class="btn-secondary btn-block" id="btn-refresh">↻ อัปเดตราคา</button>
+      <div class="account-row">
+        <span class="muted small" id="current-username"></span>
+        <span class="link-btn hidden" id="btn-add-user">+ เพิ่มผู้ใช้</span>
+        <span class="link-btn" id="btn-logout">ออกจากระบบ</span>
+      </div>
     </div>
   </aside>
 
@@ -203,6 +219,21 @@
       <div class="modal-actions">
         <button type="button" class="btn-ghost" id="btn-cancel-price">ยกเลิก</button>
         <button type="submit" class="btn-primary">บันทึก</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Add User Modal -->
+<div class="modal-backdrop hidden" id="adduser-modal">
+  <div class="modal modal-sm">
+    <h2>เพิ่มผู้ใช้ใหม่</h2>
+    <form id="adduser-form">
+      <label class="full">ชื่อผู้ใช้<input type="text" id="adduser-username" required /></label>
+      <label class="full">รหัสผ่านชั่วคราว<input type="password" id="adduser-password" required minlength="6" /></label>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="btn-cancel-adduser">ยกเลิก</button>
+        <button type="submit" class="btn-primary">สร้าง</button>
       </div>
     </form>
   </div>

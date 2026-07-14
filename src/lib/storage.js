@@ -1,9 +1,10 @@
 // All application data is stored as JSON objects inside a single R2 bucket.
 // Keys:
-//   meta/portfolios.json          -> [{id, name, parentId, createdAt}]
-//   portfolios/{id}/transactions.json -> [transaction, ...]
-//   prices/cache.json             -> {symbol: {price, currency, name, assetType, updatedAt}}
-//   fx/cache.json                 -> {"USDTHB": 36.2, updatedAt}
+//   users/index.json                              -> [{id, username, passwordHash, passwordSalt, role, createdAt}]
+//   users/{userId}/meta/portfolios.json            -> [{id, name, parentId, createdAt}]
+//   users/{userId}/portfolios/{id}/transactions.json -> [transaction, ...]
+//   prices/cache.json             -> {symbol: {price, currency, name, assetType, updatedAt}}  (shared across users)
+//   fx/cache.json                 -> {"USDTHB": 36.2, updatedAt}                                (shared across users)
 
 async function readJSON(bucket, key, fallback) {
   const obj = await bucket.get(key);
@@ -22,29 +23,42 @@ async function writeJSON(bucket, key, value) {
   return value;
 }
 
-export async function getPortfolios(bucket) {
-  return readJSON(bucket, "meta/portfolios.json", []);
+export async function getPortfolios(bucket, userId) {
+  return readJSON(bucket, `users/${userId}/meta/portfolios.json`, []);
 }
 
-export async function savePortfolios(bucket, list) {
-  return writeJSON(bucket, "meta/portfolios.json", list);
+export async function savePortfolios(bucket, userId, list) {
+  return writeJSON(bucket, `users/${userId}/meta/portfolios.json`, list);
 }
 
-export async function getTransactions(bucket, portfolioId) {
-  return readJSON(bucket, `portfolios/${portfolioId}/transactions.json`, []);
+export async function getTransactions(bucket, userId, portfolioId) {
+  return readJSON(bucket, `users/${userId}/portfolios/${portfolioId}/transactions.json`, []);
 }
 
-export async function saveTransactions(bucket, portfolioId, list) {
-  return writeJSON(bucket, `portfolios/${portfolioId}/transactions.json`, list);
+export async function saveTransactions(bucket, userId, portfolioId, list) {
+  return writeJSON(bucket, `users/${userId}/portfolios/${portfolioId}/transactions.json`, list);
 }
 
-export async function getAllTransactions(bucket) {
-  const portfolios = await getPortfolios(bucket);
+export async function deleteTransactions(bucket, userId, portfolioId) {
+  await bucket.delete(`users/${userId}/portfolios/${portfolioId}/transactions.json`);
+}
+
+export async function getAllTransactions(bucket, userId) {
+  const portfolios = await getPortfolios(bucket, userId);
   const out = {};
   for (const p of portfolios) {
-    out[p.id] = await getTransactions(bucket, p.id);
+    out[p.id] = await getTransactions(bucket, userId, p.id);
   }
   return out;
+}
+
+// Users (flat list - this app realistically has a handful of accounts, so no indexing needed).
+export async function getUsers(bucket) {
+  return readJSON(bucket, "users/index.json", []);
+}
+
+export async function saveUsers(bucket, users) {
+  return writeJSON(bucket, "users/index.json", users);
 }
 
 export async function getPriceCache(bucket) {

@@ -1,5 +1,6 @@
 const state = {
-  password: localStorage.getItem("ledger_pw") || "",
+  token: localStorage.getItem("session_token") || "",
+  user: JSON.parse(localStorage.getItem("session_user") || "null"),
   portfolios: [],
   currentId: null, // null = "All portfolios"
   summary: null,
@@ -24,12 +25,12 @@ async function api(path, options = {}) {
     ...options,
     headers: {
       "content-type": "application/json",
-      "x-app-password": state.password,
+      "x-session-token": state.token,
       ...(options.headers || {}),
     },
   });
   if (res.status === 401) {
-    showLogin("รหัสผ่านไม่ถูกต้อง หรือหมดอายุ กรุณาเข้าสู่ระบบใหม่");
+    logout("เซสชันหมดอายุ หรือไม่ได้เข้าสู่ระบบ กรุณาเข้าสู่ระบบใหม่");
     throw new Error("unauthorized");
   }
   if (!res.ok) {
@@ -78,38 +79,104 @@ document.getElementById("appname-form").addEventListener("submit", async (e) => 
 });
 
 // ---------- Login ----------
-function showLogin(errorMsg) {
+async function showLogin(errorMsg) {
   document.getElementById("app").classList.add("hidden");
   document.getElementById("login-screen").classList.remove("hidden");
   document.getElementById("login-error").textContent = errorMsg || "";
+
+  const bootstrapForm = document.getElementById("bootstrap-form");
+  const loginForm = document.getElementById("login-form");
+  try {
+    const status = await fetch("/api/auth/status").then((r) => r.json());
+    bootstrapForm.classList.toggle("hidden", status.bootstrapped);
+    loginForm.classList.toggle("hidden", !status.bootstrapped);
+  } catch (e) {
+    loginForm.classList.remove("hidden"); // fall back to normal login if the status check fails
+  }
 }
+
+function completeLogin(token, user) {
+  state.token = token;
+  state.user = user;
+  localStorage.setItem("session_token", token);
+  localStorage.setItem("session_user", JSON.stringify(user));
+  document.getElementById("login-screen").classList.add("hidden");
+  document.getElementById("app").classList.remove("hidden");
+  boot().catch((e) => console.error(e));
+}
+
+function logout(message) {
+  state.token = "";
+  state.user = null;
+  localStorage.removeItem("session_token");
+  localStorage.removeItem("session_user");
+  showLogin(message);
+}
+document.getElementById("btn-logout").addEventListener("click", () => logout());
+
+document.getElementById("bootstrap-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const appPassword = document.getElementById("bootstrap-app-password").value;
+  const username = document.getElementById("bootstrap-username").value.trim();
+  const password = document.getElementById("bootstrap-password").value;
+  try {
+    const res = await fetch("/api/auth/bootstrap", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ appPassword, username, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "สร้างบัญชีไม่สำเร็จ");
+    completeLogin(data.token, data.user);
+  } catch (err) {
+    document.getElementById("login-error").textContent = err.message;
+  }
+});
 
 document.getElementById("login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const pw = document.getElementById("login-password").value;
+  const username = document.getElementById("login-username").value.trim();
+  const password = document.getElementById("login-password").value;
   try {
-    const res = await fetch("/api/login", {
+    const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ password: pw }),
+      body: JSON.stringify({ username, password }),
     });
     const data = await res.json();
-    if (data.ok) {
-      state.password = pw;
-      localStorage.setItem("ledger_pw", pw);
-      document.getElementById("login-screen").classList.add("hidden");
-      document.getElementById("app").classList.remove("hidden");
-      boot();
-    } else {
-      document.getElementById("login-error").textContent = "รหัสผ่านไม่ถูกต้อง";
-    }
+    if (!res.ok) throw new Error(data.error || "เข้าสู่ระบบไม่สำเร็จ");
+    completeLogin(data.token, data.user);
   } catch (err) {
-    document.getElementById("login-error").textContent = "เชื่อมต่อไม่สำเร็จ";
+    document.getElementById("login-error").textContent = err.message;
+  }
+});
+
+// ---------- Admin: add user ----------
+const addUserModal = document.getElementById("adduser-modal");
+document.getElementById("btn-add-user").addEventListener("click", () => {
+  document.getElementById("adduser-form").reset();
+  addUserModal.classList.remove("hidden");
+});
+document.getElementById("btn-cancel-adduser").addEventListener("click", () => {
+  addUserModal.classList.add("hidden");
+});
+document.getElementById("adduser-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = document.getElementById("adduser-username").value.trim();
+  const password = document.getElementById("adduser-password").value;
+  try {
+    await api("/api/admin/users", { method: "POST", body: JSON.stringify({ username, password }) });
+    addUserModal.classList.add("hidden");
+    alert(`สร้างผู้ใช้ "${username}" สำเร็จ — แจ้งรหัสผ่านนี้ให้ผู้ใช้เพื่อเข้าสู่ระบบ (แนะนำให้เปลี่ยนภายหลัง)`);
+  } catch (err) {
+    alert("สร้างผู้ใช้ไม่สำเร็จ: " + err.message);
   }
 });
 
 // ---------- Boot ----------
 async function boot() {
+  document.getElementById("current-username").textContent = state.user ? state.user.username : "";
+  document.getElementById("btn-add-user").classList.toggle("hidden", !(state.user && state.user.role === "admin"));
   await loadPortfolios();
   await loadSummaryAndTx();
   document.getElementById("btn-refresh").addEventListener("click", refreshPrices);
@@ -598,7 +665,7 @@ function escapeHtml(str) {
 // ---------- Init ----------
 (async function init() {
   await loadSettings();
-  if (state.password) {
+  if (state.token && state.user) {
     document.getElementById("login-screen").classList.add("hidden");
     document.getElementById("app").classList.remove("hidden");
     boot().catch((e) => console.error(e));
