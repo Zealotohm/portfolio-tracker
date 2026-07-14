@@ -138,35 +138,6 @@ button { font-family: var(--font-body); cursor: pointer; border: none; }
 
 .sidebar-footer { display: flex; flex-direction: column; gap: 8px; }
 
-/* ---------- Ticker tape (signature element) ---------- */
-.ticker-wrap {
-  overflow: hidden;
-  background: #0d1015;
-  border-bottom: 1px solid var(--border);
-  white-space: nowrap;
-  height: 34px;
-  display: flex;
-  align-items: center;
-}
-.ticker-track {
-  display: inline-flex;
-  gap: 36px;
-  padding-left: 100%;
-  animation: ticker-scroll 40s linear infinite;
-}
-.ticker-item { font-family: var(--font-mono); font-size: 0.78rem; display: inline-flex; gap: 8px; }
-.ticker-item .sym { color: var(--text-dim); }
-.ticker-item .px { color: var(--text); }
-.ticker-item .chg.gain { color: var(--gain); }
-.ticker-item .chg.loss { color: var(--loss); }
-@keyframes ticker-scroll {
-  from { transform: translateX(0); }
-  to { transform: translateX(-100%); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .ticker-track { animation: none; padding-left: 16px; }
-}
-
 /* ---------- Main content ---------- */
 .main { padding: 28px 36px 60px; max-width: 1180px; }
 

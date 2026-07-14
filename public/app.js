@@ -205,18 +205,28 @@ async function deletePortfolio(id) {
 }
 
 // ---------- Summary + Transactions ----------
+// Guards against overlapping loads: clicking portfolio A then quickly clicking B fires two
+// requests, and without this, whichever happened to resolve last would win and overwrite the
+// correct (more recent) view - making clicks look unresponsive and needing repeated clicking.
+let loadRequestId = 0;
 async function loadSummaryAndTx() {
+  const requestId = ++loadRequestId;
   const includeSub = document.getElementById("include-sub").checked;
+  let summary, transactions;
   if (state.currentId === null) {
-    state.summary = await api("/api/summary-all");
-    state.transactions = []; // "all" view has no single tx list to edit
+    [summary, transactions] = await Promise.all([api("/api/summary-all"), Promise.resolve([])]);
   } else {
-    state.summary = await api(`/api/summary/${state.currentId}?includeSub=${includeSub}`);
-    state.transactions = await api(`/api/transactions/${state.currentId}`);
+    [summary, transactions] = await Promise.all([
+      api(`/api/summary/${state.currentId}?includeSub=${includeSub}`),
+      api(`/api/transactions/${state.currentId}`),
+    ]);
   }
+  if (requestId !== loadRequestId) return; // a newer load started while this one was in flight
+
+  state.summary = summary;
+  state.transactions = transactions;
   state.txPage = 1;
   renderSummary();
-  renderTicker();
   renderCharts();
   renderPositions();
   renderTransactions();
@@ -251,23 +261,6 @@ function renderSummary() {
   } else {
     fxBanner.classList.add("hidden");
   }
-}
-
-function renderTicker() {
-  const track = document.getElementById("ticker-track");
-  const positions = state.summary.positions.filter((p) => p.quantity > 0);
-  if (positions.length === 0) {
-    track.innerHTML = `<span class="ticker-item muted">ยังไม่มีสินทรัพย์ในพอร์ต — เพิ่ม transaction เพื่อเริ่มติดตาม</span>`;
-    return;
-  }
-  const items = positions
-    .map((p) => {
-      const cls = p.unrealizedPnLPct >= 0 ? "gain" : "loss";
-      const pct = p.unrealizedPnLPct != null ? `${p.unrealizedPnLPct >= 0 ? "+" : ""}${fmt(p.unrealizedPnLPct, { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%` : "–";
-      return `<span class="ticker-item"><span class="sym">${escapeHtml(p.symbol)}</span><span class="px">${p.currentPrice != null ? fmt(p.currentPrice) : "–"}</span><span class="chg ${cls}">${pct}</span></span>`;
-    })
-    .join("");
-  track.innerHTML = items + items; // duplicate for seamless loop
 }
 
 function renderCharts() {
