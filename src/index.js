@@ -8,6 +8,7 @@ import {
   getAllTransactions,
   getUsers,
   saveUsers,
+  deleteAllUserData,
   getPriceCache,
   savePriceCache,
   getFxCache,
@@ -31,7 +32,7 @@ function json(data, init = {}) {
 }
 
 function publicUser(u) {
-  return { id: u.id, username: u.username, role: u.role };
+  return { id: u.id, username: u.username, role: u.role, createdAt: u.createdAt };
 }
 
 // Collect every distinct symbol/assetType/currency across a set of transactions, for price+fx
@@ -269,6 +270,54 @@ const routes = [
       };
       await saveUsers(bucket, [...users, user]);
       return json(publicUser(user), { status: 201 });
+    },
+  },
+  {
+    method: "GET",
+    pattern: /^\/api\/admin\/users$/,
+    handler: async (req, env, params, auth) => {
+      if (auth.role !== "admin") return json({ error: "ต้องเป็น admin เท่านั้น" }, { status: 403 });
+      const users = await getUsers(env.DATA_BUCKET);
+      return json(users.map(publicUser));
+    },
+  },
+  {
+    method: "DELETE",
+    pattern: /^\/api\/admin\/users\/([^/]+)$/,
+    handler: async (req, env, [id], auth) => {
+      if (auth.role !== "admin") return json({ error: "ต้องเป็น admin เท่านั้น" }, { status: 403 });
+      if (id === auth.userId) return json({ error: "ลบบัญชีตัวเองไม่ได้" }, { status: 400 });
+      const bucket = env.DATA_BUCKET;
+      const users = await getUsers(bucket);
+      const target = users.find((u) => u.id === id);
+      if (!target) return json({ error: "not found" }, { status: 404 });
+      const remainingAdmins = users.filter((u) => u.role === "admin" && u.id !== id);
+      if (target.role === "admin" && remainingAdmins.length === 0) {
+        return json({ error: "ต้องมี admin เหลืออย่างน้อย 1 คน" }, { status: 400 });
+      }
+      await saveUsers(bucket, users.filter((u) => u.id !== id));
+      await deleteAllUserData(bucket, id);
+      return json({ ok: true });
+    },
+  },
+  {
+    method: "PUT",
+    pattern: /^\/api\/admin\/users\/([^/]+)\/password$/,
+    // Admin-initiated password reset (no need to know the old password) - for helping a user
+    // who's locked out, or rotating a temporary password after creating an account.
+    handler: async (req, env, [id], auth) => {
+      if (auth.role !== "admin") return json({ error: "ต้องเป็น admin เท่านั้น" }, { status: 403 });
+      const body = await req.json().catch(() => ({}));
+      const password = body.password || "";
+      if (password.length < 6) return json({ error: "รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร" }, { status: 400 });
+      const bucket = env.DATA_BUCKET;
+      const users = await getUsers(bucket);
+      const idx = users.findIndex((u) => u.id === id);
+      if (idx === -1) return json({ error: "not found" }, { status: 404 });
+      const { salt, hash } = await createPasswordRecord(password);
+      users[idx] = { ...users[idx], passwordSalt: salt, passwordHash: hash };
+      await saveUsers(bucket, users);
+      return json({ ok: true });
     },
   },
   // ---- Portfolios ----

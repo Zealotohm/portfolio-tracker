@@ -61,6 +61,20 @@ export async function saveUsers(bucket, users) {
   return writeJSON(bucket, "users/index.json", users);
 }
 
+// Deletes every portfolio/transaction object under a user's namespace (used when removing an
+// account). R2 has no recursive delete, so list-then-delete every key under the prefix.
+export async function deleteAllUserData(bucket, userId) {
+  const prefix = `users/${userId}/`;
+  let cursor;
+  do {
+    const listing = await bucket.list({ prefix, cursor });
+    if (listing.objects.length > 0) {
+      await Promise.all(listing.objects.map((o) => bucket.delete(o.key)));
+    }
+    cursor = listing.truncated ? listing.cursor : undefined;
+  } while (cursor);
+}
+
 export async function getPriceCache(bucket) {
   return readJSON(bucket, "prices/cache.json", {});
 }

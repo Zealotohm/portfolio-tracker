@@ -151,36 +151,36 @@ document.getElementById("login-form").addEventListener("submit", async (e) => {
   }
 });
 
-// ---------- Admin: add user ----------
-const addUserModal = document.getElementById("adduser-modal");
-document.getElementById("btn-add-user").addEventListener("click", () => {
-  document.getElementById("adduser-form").reset();
-  addUserModal.classList.remove("hidden");
-});
-document.getElementById("btn-cancel-adduser").addEventListener("click", () => {
-  addUserModal.classList.add("hidden");
-});
-document.getElementById("adduser-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const username = document.getElementById("adduser-username").value.trim();
-  const password = document.getElementById("adduser-password").value;
-  try {
-    await api("/api/admin/users", { method: "POST", body: JSON.stringify({ username, password }) });
-    addUserModal.classList.add("hidden");
-    alert(`สร้างผู้ใช้ "${username}" สำเร็จ — แจ้งรหัสผ่านนี้ให้ผู้ใช้เพื่อเข้าสู่ระบบ (แนะนำให้เปลี่ยนภายหลัง)`);
-  } catch (err) {
-    alert("สร้างผู้ใช้ไม่สำเร็จ: " + err.message);
-  }
-});
-
 // ---------- Boot ----------
 async function boot() {
   document.getElementById("current-username").textContent = state.user ? state.user.username : "";
-  document.getElementById("btn-add-user").classList.toggle("hidden", !(state.user && state.user.role === "admin"));
+  document.getElementById("btn-admin-link").classList.toggle("hidden", !(state.user && state.user.role === "admin"));
   await loadPortfolios();
   await loadSummaryAndTx();
   document.getElementById("btn-refresh").addEventListener("click", refreshPrices);
 }
+
+// ---------- Mobile sidebar drawer ----------
+function setMobileSidebarOpen(open) {
+  document.getElementById("sidebar").classList.toggle("mobile-open", open);
+  document.getElementById("mobile-backdrop").classList.toggle("hidden", !open);
+}
+document.getElementById("btn-mobile-menu").addEventListener("click", () => setMobileSidebarOpen(true));
+document.getElementById("mobile-backdrop").addEventListener("click", () => setMobileSidebarOpen(false));
+
+// ---------- Privacy toggle: hide absolute values, keep % P&L ----------
+state.hideValues = localStorage.getItem("hide_values") === "true";
+function applyHideValuesButton() {
+  const btn = document.getElementById("btn-toggle-values");
+  btn.textContent = state.hideValues ? "🙈 แสดงมูลค่า" : "👁 ซ่อนมูลค่า";
+}
+document.getElementById("btn-toggle-values").addEventListener("click", () => {
+  state.hideValues = !state.hideValues;
+  localStorage.setItem("hide_values", String(state.hideValues));
+  applyHideValuesButton();
+  if (state.summary) renderSummary();
+});
+applyHideValuesButton();
 
 async function loadPortfolios() {
   state.portfolios = await api("/api/portfolios");
@@ -246,6 +246,7 @@ function selectPortfolio(id) {
   const p = state.portfolios.find((x) => x.id === id);
   document.getElementById("current-portfolio-name").textContent = p ? p.name : "All Portfolios";
   document.getElementById("current-portfolio-sub").textContent = p ? "รายละเอียดพอร์ตนี้" : "ภาพรวมทุกพอร์ตรวมกัน";
+  setMobileSidebarOpen(false);
   loadSummaryAndTx();
 }
 
@@ -301,21 +302,25 @@ async function loadSummaryAndTx() {
 
 document.getElementById("include-sub").addEventListener("change", loadSummaryAndTx);
 
+const HIDDEN_VALUE_MASK = "••••••";
+
 function renderSummary() {
   const s = state.summary;
-  document.getElementById("stat-value").textContent = `${fmt(s.totalValue)} ${s.baseCurrency}`;
-  document.getElementById("stat-cost").textContent = `${fmt(s.totalCost)} ${s.baseCurrency}`;
+  const mask = state.hideValues;
+  document.getElementById("stat-value").textContent = mask ? HIDDEN_VALUE_MASK : `${fmt(s.totalValue)} ${s.baseCurrency}`;
+  document.getElementById("stat-cost").textContent = mask ? HIDDEN_VALUE_MASK : `${fmt(s.totalCost)} ${s.baseCurrency}`;
 
   const pnlEl = document.getElementById("stat-pnl");
   const pnlPctEl = document.getElementById("stat-pnl-pct");
-  pnlEl.textContent = `${s.totalUnrealizedPnL >= 0 ? "+" : ""}${fmt(s.totalUnrealizedPnL)} ${s.baseCurrency}`;
+  pnlEl.textContent = mask ? HIDDEN_VALUE_MASK : `${s.totalUnrealizedPnL >= 0 ? "+" : ""}${fmt(s.totalUnrealizedPnL)} ${s.baseCurrency}`;
   pnlPctEl.textContent = `${s.totalUnrealizedPnLPct >= 0 ? "+" : ""}${fmt(s.totalUnrealizedPnLPct)}%`;
   const cls = s.totalUnrealizedPnL >= 0 ? "gain" : "loss";
   pnlEl.className = "card-value mono " + cls;
   pnlPctEl.className = "card-sub mono " + cls;
 
-  document.getElementById("stat-realized").textContent =
-    `${fmt(s.totalRealizedPnL + s.totalDividends)} ${s.baseCurrency}`;
+  document.getElementById("stat-realized").textContent = mask
+    ? HIDDEN_VALUE_MASK
+    : `${fmt(s.totalRealizedPnL + s.totalDividends)} ${s.baseCurrency}`;
 
   document.getElementById("last-updated").textContent = s.priceUpdatedAt
     ? "ราคาอัปเดต: " + new Date(s.priceUpdatedAt).toLocaleString("th-TH")

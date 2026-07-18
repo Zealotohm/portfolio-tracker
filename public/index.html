@@ -41,7 +41,10 @@
 <!-- App shell -->
 <div id="app" class="app hidden">
 
-  <aside class="sidebar">
+  <button type="button" class="mobile-menu-btn" id="btn-mobile-menu" aria-label="เปิดเมนู">☰</button>
+  <div class="mobile-backdrop hidden" id="mobile-backdrop"></div>
+
+  <aside class="sidebar" id="sidebar">
     <div class="brand">
       <span class="brand-mark">◆</span>
       <span class="brand-name" id="brand-name-app">SabaiPort</span>
@@ -59,7 +62,7 @@
       <button class="btn-secondary btn-block" id="btn-refresh">↻ อัปเดตราคา</button>
       <div class="account-row">
         <span class="muted small" id="current-username"></span>
-        <span class="link-btn hidden" id="btn-add-user">+ เพิ่มผู้ใช้</span>
+        <a class="link-btn hidden" id="btn-admin-link" href="/admin.html">จัดการผู้ใช้</a>
         <span class="link-btn" id="btn-logout">ออกจากระบบ</span>
       </div>
     </div>
@@ -71,10 +74,13 @@
         <h1 id="current-portfolio-name">All Portfolios</h1>
         <p class="muted" id="current-portfolio-sub">ภาพรวมทุกพอร์ตรวมกัน</p>
       </div>
-      <label class="include-sub-toggle">
-        <input type="checkbox" id="include-sub" checked />
-        รวม sub-portfolio
-      </label>
+      <div class="topbar-actions">
+        <button type="button" class="btn-ghost btn-sm" id="btn-toggle-values" title="ซ่อน/แสดงมูลค่า">👁 ซ่อนมูลค่า</button>
+        <label class="include-sub-toggle">
+          <input type="checkbox" id="include-sub" checked />
+          รวม sub-portfolio
+        </label>
+      </div>
     </header>
 
     <p id="fx-warning-banner" class="fx-warning hidden"></p>
@@ -219,21 +225,6 @@
       <div class="modal-actions">
         <button type="button" class="btn-ghost" id="btn-cancel-price">ยกเลิก</button>
         <button type="submit" class="btn-primary">บันทึก</button>
-      </div>
-    </form>
-  </div>
-</div>
-
-<!-- Add User Modal -->
-<div class="modal-backdrop hidden" id="adduser-modal">
-  <div class="modal modal-sm">
-    <h2>เพิ่มผู้ใช้ใหม่</h2>
-    <form id="adduser-form">
-      <label class="full">ชื่อผู้ใช้<input type="text" id="adduser-username" required /></label>
-      <label class="full">รหัสผ่านชั่วคราว<input type="password" id="adduser-password" required minlength="6" /></label>
-      <div class="modal-actions">
-        <button type="button" class="btn-ghost" id="btn-cancel-adduser">ยกเลิก</button>
-        <button type="submit" class="btn-primary">สร้าง</button>
       </div>
     </form>
   </div>

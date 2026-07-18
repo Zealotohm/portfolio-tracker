@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>จัดการผู้ใช้ — SabaiPort</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+
+<div id="denied-screen" class="login-screen hidden">
+  <div class="login-card">
+    <div class="brand">
+      <span class="brand-mark">◆</span>
+      <span class="brand-name">SabaiPort</span>
+    </div>
+    <p class="login-sub" id="denied-message">หน้านี้สำหรับ admin เท่านั้น</p>
+    <a class="btn-primary" href="/" style="display:inline-block; text-decoration:none; padding:10px 18px;">กลับไปที่แอป</a>
+  </div>
+</div>
+
+<div id="admin-app" class="app hidden" style="grid-template-columns: 1fr;">
+  <main class="main" style="max-width: 900px; margin: 0 auto;">
+    <header class="topbar">
+      <div>
+        <h1>จัดการผู้ใช้</h1>
+        <p class="muted">เพิ่ม ลบ หรือเปลี่ยนรหัสผ่านผู้ใช้ในระบบ — เฉพาะ admin</p>
+      </div>
+      <a class="link-btn" href="/">← กลับไปที่แอป</a>
+    </header>
+
+    <section class="panel">
+      <div class="panel-header-row">
+        <h2>ผู้ใช้ทั้งหมด</h2>
+        <button class="btn-primary" id="btn-add-user">+ เพิ่มผู้ใช้</button>
+      </div>
+      <div class="table-wrap">
+        <table id="users-table">
+          <thead>
+            <tr><th>ชื่อผู้ใช้</th><th>สิทธิ์</th><th>สร้างเมื่อ</th><th></th></tr>
+          </thead>
+          <tbody id="users-body"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- Add User Modal -->
+<div class="modal-backdrop hidden" id="adduser-modal">
+  <div class="modal modal-sm">
+    <h2>เพิ่มผู้ใช้ใหม่</h2>
+    <form id="adduser-form">
+      <label class="full">ชื่อผู้ใช้<input type="text" id="adduser-username" required /></label>
+      <label class="full">รหัสผ่านชั่วคราว<input type="password" id="adduser-password" required minlength="6" /></label>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="btn-cancel-adduser">ยกเลิก</button>
+        <button type="submit" class="btn-primary">สร้าง</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Reset Password Modal -->
+<div class="modal-backdrop hidden" id="resetpw-modal">
+  <div class="modal modal-sm">
+    <h2>ตั้งรหัสผ่านใหม่ — <span id="resetpw-username"></span></h2>
+    <form id="resetpw-form">
+      <label class="full">รหัสผ่านใหม่<input type="password" id="resetpw-password" required minlength="6" /></label>
+      <div class="modal-actions">
+        <button type="button" class="btn-ghost" id="btn-cancel-resetpw">ยกเลิก</button>
+        <button type="submit" class="btn-primary">บันทึก</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script src="/admin.js"></script>
+</body>
+</html>
