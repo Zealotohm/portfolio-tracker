@@ -15,6 +15,8 @@ import {
   saveFxCache,
   getSecFundDirectory,
   saveSecFundDirectory,
+  getTftDirectory,
+  saveTftDirectory,
   getSettings,
   saveSettings,
   getPriceHistory,
@@ -90,13 +92,16 @@ async function refreshPricesAndFx(env) {
   const priceCache = await getPriceCache(bucket);
   const secDirectory = await getSecFundDirectory(bucket);
   const priceHistory = await getPriceHistory(bucket);
+  const tftDirectory = await getTftDirectory(bucket);
   const { cache: updatedPriceCache, failures } = await refreshAllPrices(
     holdings,
     priceCache,
     env.SEC_API_KEY,
     secDirectory,
     (rebuilt) => saveSecFundDirectory(bucket, rebuilt),
-    priceHistory
+    priceHistory,
+    tftDirectory,
+    (rebuilt) => saveTftDirectory(bucket, rebuilt)
   );
   await savePriceCache(bucket, updatedPriceCache);
   await savePriceHistory(bucket, mergePriceHistory(priceHistory, updatedPriceCache));

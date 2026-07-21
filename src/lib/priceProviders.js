@@ -222,6 +222,49 @@ export async function fetchSecFundNav(projId, apiKey, fundClassName = null) {
   };
 }
 
+// ---- ThaiFundsToday (unofficial, no key required) ----
+// A second, independent Thai fund NAV source (api.thaifundstoday.com), used alongside SEC's
+// Open API so we can compare freshness and use whichever actually has the newer NAV date -
+// some AMCs report to one faster than the other. Confirmed working and unauthenticated:
+//   GET /api/v3/funds/search?q=<symbol>  -> [{symbol, slug, name, ...}], exact symbol match
+//   GET /api/v3/funds/<slug>             -> {fund: {performance: {price, last_updated}}}
+// Unlike SEC, this handles decorated symbols (e.g. "SCBS&P500A", "SCBCHAA") as literal exact
+// matches with no stripping/guessing needed - it's a third-party site (not a regulator), so
+// treat it as a freshness cross-check rather than the sole source of truth.
+const TFT_BASE = "https://api.thaifundstoday.com/api/v3";
+
+async function tftGet(path) {
+  const res = await fetch(`${TFT_BASE}${path}`, { headers: { "User-Agent": "Mozilla/5.0" } });
+  if (!res.ok) throw new Error(`ThaiFundsToday ${path} -> ${res.status}`);
+  return res.json();
+}
+
+export async function resolveThaiFundsTodaySlug(symbol) {
+  const data = await tftGet(`/funds/search?q=${encodeURIComponent(symbol)}`);
+  const funds = data?.funds || [];
+  const target = symbol.trim().toUpperCase();
+  const match = funds.find((f) => (f.symbol || "").toUpperCase() === target);
+  return match?.slug || null;
+}
+
+export async function fetchThaiFundsTodayNav(slug) {
+  const data = await tftGet(`/funds/${encodeURIComponent(slug)}`);
+  const perf = data?.fund?.performance;
+  const props = data?.fund?.properties;
+  if (!perf || perf.price == null || !perf.last_updated) {
+    throw new Error(`ThaiFundsToday: ไม่มีข้อมูลราคาสำหรับ ${slug}`);
+  }
+  return {
+    symbol: props?.symbol || slug,
+    price: Number(perf.price),
+    currency: "THB",
+    name: props?.name || slug,
+    date: perf.last_updated,
+    updatedAt: new Date().toISOString(),
+    source: "thaifundstoday",
+  };
+}
+
 // Refresh every tracked symbol and return the updated cache plus any symbols that failed
 // to fetch (so the caller/UI can flag stale prices instead of silently keeping old data).
 // `secDirectory` is the cached { byAbbr: { SYMBOL: proj_id } } map from storage.js;
@@ -230,7 +273,16 @@ export async function fetchSecFundNav(projId, apiKey, fundClassName = null) {
 // { [symbol]: [{date, price, currency}] } archive from storage.js: when a symbol fails outright
 // (e.g. a fund's NAV hasn't been published yet, or a provider is briefly down), we fall back to
 // its most recent historical entry instead of showing nothing.
-export async function refreshAllPrices(holdings, existingCache, secApiKey, secDirectory, onDirectoryUpdate, priceHistory = {}) {
+export async function refreshAllPrices(
+  holdings,
+  existingCache,
+  secApiKey,
+  secDirectory,
+  onDirectoryUpdate,
+  priceHistory = {},
+  tftDirectory,
+  onTftDirectoryUpdate
+) {
   const cache = { ...existingCache };
   const failures = [];
   const cryptoIds = holdings.filter((h) => h.assetType === "crypto").map((h) => h.symbol);
@@ -247,40 +299,71 @@ export async function refreshAllPrices(holdings, existingCache, secApiKey, secDi
     failures.push(...cryptoIds);
   }
 
-  // Thai mutual funds via SEC Open API: resolve each trading name to its proj_id (cached after
-  // the first lookup), then fetch NAV.
+  // Thai mutual funds: query SEC's Open API (authoritative regulator data) and ThaiFundsToday
+  // (an independent third-party source) in parallel, and keep whichever NAV date is newer -
+  // some AMCs publish to one faster than the other, and this also lets ThaiFundsToday fill in
+  // for the handful of funds whose decorated symbol never resolves against SEC's database.
   const directory = { byAbbr: { ...(secDirectory?.byAbbr || {}) } };
   let directoryChanged = false;
-  for (const h of thaiFunds) {
-    try {
-      const key = h.symbol.trim().toUpperCase();
-      let resolved = directory.byAbbr[key];
-      if (typeof resolved === "string") resolved = { projId: resolved, fundClassName: null }; // old cache shape
+  const tftDir = { byAbbr: { ...(tftDirectory?.byAbbr || {}) } };
+  let tftDirChanged = false;
 
-      // A cached "unresolved" marker (with a cooldown) means don't burn subrequests re-running
-      // the multi-candidate search every single refresh for a symbol that's never found anyway -
-      // Workers has a per-invocation subrequest cap, and a growing portfolio adds up fast.
-      const onCooldown =
-        resolved?.unresolved && Date.now() - new Date(resolved.checkedAt).getTime() < 24 * 60 * 60 * 1000;
-      if (resolved?.unresolved && !onCooldown) resolved = null;
+  const fetchFromSec = async (h) => {
+    const key = h.symbol.trim().toUpperCase();
+    let resolved = directory.byAbbr[key];
+    if (typeof resolved === "string") resolved = { projId: resolved, fundClassName: null }; // old cache shape
 
-      if (!resolved) {
-        const found = await resolveSecProjId(h.symbol, secApiKey);
-        resolved = found || { unresolved: true, checkedAt: new Date().toISOString() };
-        directory.byAbbr[key] = resolved;
-        directoryChanged = true;
-      }
-      if (!resolved.projId) {
-        throw new Error(`ไม่พบกองทุน "${h.symbol}" ใน SEC (ลองค้นด้วยชื่อย่อกองทุน หรือใส่ proj_id โดยตรง)`);
-      }
-      cache[h.symbol] = await fetchSecFundNav(resolved.projId, secApiKey, resolved.fundClassName);
-    } catch (e) {
-      console.error("SEC NAV refresh failed for", h.symbol, e);
-      failures.push(h.symbol);
+    // A cached "unresolved" marker (with a cooldown) means don't burn subrequests re-running
+    // the multi-candidate search every single refresh for a symbol that's never found anyway -
+    // Workers has a per-invocation subrequest cap, and a growing portfolio adds up fast.
+    const onCooldown =
+      resolved?.unresolved && Date.now() - new Date(resolved.checkedAt).getTime() < 24 * 60 * 60 * 1000;
+    if (resolved?.unresolved && !onCooldown) resolved = null;
+
+    if (!resolved) {
+      const found = await resolveSecProjId(h.symbol, secApiKey);
+      resolved = found || { unresolved: true, checkedAt: new Date().toISOString() };
+      directory.byAbbr[key] = resolved;
+      directoryChanged = true;
     }
+    if (!resolved.projId) return null;
+    return fetchSecFundNav(resolved.projId, secApiKey, resolved.fundClassName);
+  };
+
+  const fetchFromTft = async (h) => {
+    const key = h.symbol.trim().toUpperCase();
+    let slug = tftDir.byAbbr[key];
+    // Unlike SEC's directory, an unresolved slug has no cooldown - the search call is cheap and
+    // reliable enough that it's fine to just cache "null" permanently once tried.
+    if (slug === undefined) {
+      slug = (await resolveThaiFundsTodaySlug(h.symbol)) || null;
+      tftDir.byAbbr[key] = slug;
+      tftDirChanged = true;
+    }
+    if (!slug) return null;
+    return fetchThaiFundsTodayNav(slug);
+  };
+
+  for (const h of thaiFunds) {
+    const [secResult, tftResult] = await Promise.allSettled([fetchFromSec(h), fetchFromTft(h)]);
+    const secQuote = secResult.status === "fulfilled" ? secResult.value : null;
+    const tftQuote = tftResult.status === "fulfilled" ? tftResult.value : null;
+    if (secResult.status === "rejected") console.error("SEC NAV refresh failed for", h.symbol, secResult.reason);
+    if (tftResult.status === "rejected") console.error("ThaiFundsToday refresh failed for", h.symbol, tftResult.reason);
+
+    if (!secQuote && !tftQuote) {
+      failures.push(h.symbol);
+      continue;
+    }
+    // Prefer whichever has the newer NAV date; SEC wins ties as the authoritative source.
+    const best = !tftQuote || (secQuote && secQuote.date >= tftQuote.date) ? secQuote : tftQuote;
+    cache[h.symbol] = best;
   }
   if (directoryChanged && onDirectoryUpdate) {
     await onDirectoryUpdate({ byAbbr: directory.byAbbr, updatedAt: new Date().toISOString() });
+  }
+  if (tftDirChanged && onTftDirectoryUpdate) {
+    await onTftDirectoryUpdate({ byAbbr: tftDir.byAbbr, updatedAt: new Date().toISOString() });
   }
 
   // Stocks/ETF/global funds one call each (Yahoo has no clean batch endpoint on the public chart API)

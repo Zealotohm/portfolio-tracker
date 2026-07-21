@@ -101,6 +101,16 @@ export async function saveSecFundDirectory(bucket, directory) {
   return writeJSON(bucket, "prices/sec-fund-directory.json", directory);
 }
 
+// Same idea, for the ThaiFundsToday cross-check source: maps a fund's trading symbol to its
+// ThaiFundsToday slug (e.g. "SCBCHAA" -> "2480-scb-china-a-shares-fund-a-foreign").
+export async function getTftDirectory(bucket) {
+  return readJSON(bucket, "prices/tft-directory.json", { byAbbr: {}, updatedAt: null });
+}
+
+export async function saveTftDirectory(bucket, directory) {
+  return writeJSON(bucket, "prices/tft-directory.json", directory);
+}
+
 // App-level display settings (currently just the app name, editable in the UI).
 export async function getSettings(bucket) {
   return readJSON(bucket, "meta/settings.json", { appName: "SabaiPort" });
