@@ -403,11 +403,14 @@ function renderPositions() {
         p.currentPrice != null && p.priceDate
           ? `<br/><span class="muted small">${p.priceDate === today ? "" : "ณ วันที่ " + p.priceDate}${p.priceStale ? " (ราคาย้อนหลัง)" : ""}</span>`
           : "";
+      // Thai fund NAV is conventionally quoted to 4 decimal places (e.g. 12.3456), unlike
+      // stocks/ETFs/crypto which read fine at 2.
+      const priceOpts = p.assetType === "thai_fund" ? { maximumFractionDigits: 4, minimumFractionDigits: 4 } : {};
       tr.innerHTML = `
         <td class="label-cell">${escapeHtml(p.symbol)}<br/><span class="muted small">${assetTypeLabel(p.assetType)}</span></td>
         <td>${fmt(p.quantity, { maximumFractionDigits: 6, minimumFractionDigits: 0 })}</td>
-        <td>${fmt(p.avgCost)} ${escapeHtml(p.currency)}</td>
-        <td>${p.currentPrice != null ? fmt(p.currentPrice) + " " + escapeHtml(p.quoteCurrency) : "–"} <button type="button" class="icon-btn" data-action="edit-price" title="ตั้งราคาด้วยตนเอง">✎</button>${priceDateNote}</td>
+        <td>${fmt(p.avgCost, priceOpts)} ${escapeHtml(p.currency)}</td>
+        <td>${p.currentPrice != null ? fmt(p.currentPrice, priceOpts) + " " + escapeHtml(p.quoteCurrency) : "–"} <button type="button" class="icon-btn" data-action="edit-price" title="ตั้งราคาด้วยตนเอง">✎</button>${priceDateNote}</td>
         <td>${p.marketValueBase != null ? fmt(p.marketValueBase) + " " + escapeHtml(state.summary.baseCurrency) : "–"}${staleBadge}</td>
         <td class="${cls}">${p.unrealizedPnLBase != null ? (p.unrealizedPnLBase >= 0 ? "+" : "") + fmt(p.unrealizedPnLBase) : "–"}</td>
         <td class="${cls}">${p.unrealizedPnLPct != null ? (p.unrealizedPnLPct >= 0 ? "+" : "") + fmt(p.unrealizedPnLPct, { maximumFractionDigits: 1, minimumFractionDigits: 1 }) + "%" : "–"}</td>
@@ -432,12 +435,13 @@ function renderTransactions() {
 
   pageItems.forEach((t) => {
       const tr = document.createElement("tr");
+      const priceOpts = t.assetType === "thai_fund" ? { maximumFractionDigits: 4, minimumFractionDigits: 4 } : {};
       tr.innerHTML = `
         <td>${t.date}</td>
         <td class="label-cell">${txTypeLabel(t.type)}</td>
         <td class="label-cell">${escapeHtml(t.symbol)}</td>
         <td>${fmt(t.quantity, { maximumFractionDigits: 6, minimumFractionDigits: 0 })}</td>
-        <td>${fmt(t.price)}</td>
+        <td>${fmt(t.price, priceOpts)}</td>
         <td>${fmt(t.fees || 0)}</td>
         <td class="label-cell">${escapeHtml(t.currency)}</td>
         <td class="label-cell muted small">${escapeHtml(t.note || "")}</td>
