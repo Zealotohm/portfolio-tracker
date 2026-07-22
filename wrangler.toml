@@ -12,9 +12,13 @@ binding = "ASSETS"
 binding = "DATA_BUCKET"
 bucket_name = "portfolio-tracker-data"
 
-# ---- Daily price refresh (runs at 22:30 UTC ~ 05:30 Bangkok time, before markets reopen) ----
+# ---- Price refresh, twice daily ----
+# 45 09 UTC = 16:45 Bangkok, shortly after SET market close (~16:30 Bangkok) - keeps Thai
+#   stocks/funds fresh the same evening instead of waiting until the next run.
+# 30 22 UTC = 05:30 Bangkok, after US markets close (~21:00-22:00 UTC) - keeps US/global
+#   stocks fresh, and doubles as a pre-market-open refresh for Thai holdings.
 [triggers]
-crons = ["30 22 * * *"]
+crons = ["45 9 * * *", "30 22 * * *"]
 
 # ---- Secrets (set with `wrangler secret put <NAME>`) ----
 # APP_PASSWORD -> single shared password protecting the app
